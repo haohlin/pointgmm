@@ -3,6 +3,9 @@ __pycache__
 .idea
 
 checkpoints/
+dataset/
+*.npz
+*.npy
 *.gif
 *.png
 *.obj

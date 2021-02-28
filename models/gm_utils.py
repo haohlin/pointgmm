@@ -157,8 +157,78 @@ def gm_sample(gms:tuple, num_samples:int) -> tuple:
 
     return torch.cat(samples, 0), torch.cat(splits, 0)
 
+def get_hgmm_params(gms: tuple or list, flatten_sigma=False):
+    batch_size = gms[-1][0].shape[0]
+    device = gms[-1][0].device
+    samples = []
+    splits = []
 
-def hierarchical_gm_sample(gms: tuple or list, num_samples: int, flatten_sigma=True) -> tuple:
+    def bottom_pi():
+        if gms[0] is None:
+            pi = gms[-1][3].view(batch_size, -1)
+            pi = torch.softmax(pi, dim=1)
+        else:
+            last_pi = torch.ones(batch_size, 1, device=device)
+            for gm in gms:
+                _, _, _, pi, _ = gm
+                # pi = pi * last_pi[:, :, None]
+                pi = torch.softmax(pi, dim=2) * last_pi[:, :, None]
+                last_pi = pi.view(batch_size, -1)
+        return pi.view(batch_size, -1)
+
+    pi = bottom_pi()
+    mu, p, _, _, eigen = gms[-1]
+    if flatten_sigma:
+        shape = eigen.shape
+        min_eigen_indices = eigen.argmin(dim=3).flatten()
+        eigen = eigen.view(-1, shape[-1])
+        eigen[torch.arange(eigen.shape[0]), min_eigen_indices] = const.EPSILON
+        eigen = eigen.view(*shape)
+
+    sigma = torch.matmul(p.transpose(3, 4), p * eigen[:, :, :, :, None])
+    mu, sigma = mu.view(batch_size, pi.shape[1], 3), sigma.view(batch_size, -1, 3, 3)
+
+    return pi, mu, sigma
+
+def hgmm_segmentation(gms: tuple, x: T):
+
+    def reshape_param(param):
+        return param.view([-1] + list(param.shape[2:]))[parent_idx]
+
+    batch_size, num_points, dim = x.shape
+    x = x.view(batch_size * num_points, dim)
+    parent_idx = torch.meshgrid([torch.arange(batch_size), torch.arange(num_points)])[0].flatten().to(x.device)
+    hard_split = []
+
+    for idx, gm in enumerate(gms):
+        if gm is None:
+            continue
+        mu, p, sigma_det, phi, eigen = gm
+        eigen_inv = 1 / eigen
+        sigma_inverse = torch.matmul(p.transpose(3, 4), p * eigen_inv[:, :, :, :, None])
+        num_children = mu.shape[2]
+
+        if gms[0] is None:
+            phi = phi.view(batch_size, -1)
+            phi = torch.softmax(phi, dim=1)
+            phi = phi.view(batch_size, mu.shape[1], -1)
+        else:
+            phi = torch.softmax(phi, dim=2)
+        const_1 = phi / torch.sqrt((2 * math.pi) ** dim * sigma_det)
+        mu, sigma_inverse, const_1 = list(map(reshape_param, [mu, sigma_inverse, const_1]))
+        distance = x[:, None, :] - mu
+        mahalanobis_distance = - .5 * torch.einsum('ngd,ngdc,ngc->ng', distance, sigma_inverse, distance)
+        const_2, _ = mahalanobis_distance.max(dim=1)  # for numeric stability
+        mahalanobis_distance -= const_2[:, None]
+        probs = const_1 * torch.exp(mahalanobis_distance)
+        hard_split_ = torch.argmax(probs, dim=1)
+        parent_idx = parent_idx * num_children + hard_split_
+        #print("parent_idx.shape", probs.shape)
+        hard_split.append(parent_idx.cpu().numpy())
+
+    return hard_split
+
+def hierarchical_gm_sample(gms: tuple or list, num_samples: int, flatten_sigma=False) -> tuple:
     batch_size = gms[-1][0].shape[0]
     device = gms[-1][0].device
     samples = []
@@ -197,6 +267,7 @@ def hierarchical_gm_sample(gms: tuple or list, num_samples: int, flatten_sigma=T
         return torch.cat(vs, 0).unsqueeze(0), splits_.unsqueeze(0)
 
     phi = bottom_phi()
+    #print('phi shape: ', phi.shape)
     mu, p, _, _, eigen = gms[-1]
     if flatten_sigma:
         shape = eigen.shape
@@ -209,13 +280,14 @@ def hierarchical_gm_sample(gms: tuple or list, num_samples: int, flatten_sigma=T
     mu, sigma = mu.view(batch_size, phi.shape[1], 3), sigma.view(batch_size, -1, 3, 3)
     L = (p * torch.sqrt(eigen[:, :, :, :, None])).view(batch_size, -1, 3, 3)
     classes = torch.arange(phi.shape[1], device=device)
+    #print('classes shape: ', classes.shape)
 
     for b in range(batch_size):
         vs_, splits_ = sample_batch(b)
         samples.append(vs_)
         splits.append(splits_)
 
-    return torch.cat(samples, 0), torch.cat(splits, 0)
+    return torch.cat(samples, 0), torch.cat(splits, 0), phi, mu, sigma
 
 
 def eigen_penalty_loss(gms: list, eigen_penalty: float) -> T:
@@ -226,7 +298,39 @@ def eigen_penalty_loss(gms: list, eigen_penalty: float) -> T:
     else:
         penalty = torch.zeros(0)
     return penalty
+    
+def non_max_suppression_3d(gms, nms_th):
+    # x:[p, z, w, h, d]
+    pi, mu, sigma = gms
+    pi, mu, sigma = pi.squeeze(0), mu.squeeze(0), sigma.squeeze(0)
+    pi = pi.cpu().numpy()
+    mu = mu.cpu().numpy()
+    x = [pi]
+    box = []
+    for sigma_ in sigma:
+        print(sigma_.shape)
+        box_ = 2 * torch.sqrt(5.99 * torch.eig(sigma_)[0][:,0])
+        box.append(box_.cpu().numpy())
+    box = np.asarray(box)
+    x = np.asarray([pi, mu[:, 0], mu[:, 1], mu[:, 2], box[:, 0], box[:, 1], box[:, 2]]).T
 
+    if len(x) == 0:
+        return x
+
+    x = x[np.argsort(-x[:, 0])]
+    bboxes = [x[0]]
+    for i in np.arange(1, len(x)):
+        bbox = x[i]
+        flag = 1
+        for j in range(len(bboxes)):
+            if IoU(bbox[1:], bboxes[j][1:]) > nms_th:
+                flag = -1
+                break
+            if flag == 1:
+                bboxes.append(bbox)
+
+    bboxes = np.asarray(bboxes, np.float32)
+    return bboxes
 
 if __name__ == '__main__':
     import pickle

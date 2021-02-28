@@ -1,5 +1,6 @@
 import models.model_factory as factory
 import models.gm_utils as gm_utils
+import models.nms as nms
 from options import TrainOptions, Options
 from constants import OUT_DIR
 from show.view_utils import view
@@ -24,7 +25,7 @@ class ViewMem:
     device = CPU
     ds_size = 1
     max_items = 8
-    points_in_sample = 2048
+    points_in_sample = 4096#2048
     loader = None
     memory = None
     save_separate = {'sample', 'byid'}
@@ -50,7 +51,9 @@ def save_np_points(points_group, path: str, prefix: str, start_counts:int, trace
             saving_path = f'{path}{prefix}_{start_counts + i:03d}.npz'
         else:
             saving_path = f'{path}{prefix}_{start_counts:03d}_{i:02d}.npz'
-        np.savez_compressed(saving_path, points=group[0], splits=group[1], palette=group[2])
+        np.savez_compressed(saving_path, input_points=points_group[0], sample_points=group[1], splits=group[2], 
+                            pts_seg=group[3], palette=group[4], pi=group[5], mu=group[6], sigma=group[7])
+
     if prefix in trace.save_separate:
         return len(points_group[0])
     return 1
@@ -102,14 +105,14 @@ def init_loader(args, trace: ViewMem):
 
 def get_z_by_id(encoder, args: Options, num_items: int, idx, trace: ViewMem):
     init_loader(args, trace)
-    if idx is None or trace.last_idx is None:
+    if idx is None and trace.last_idx is None:
         inds, data = trace.loader.get_random_batch()
         trace.last_idx = [int(index) for index in inds[:num_items]]
     else:
         data = trace.loader.get_by_ids(*idx)
     input_points = data[:num_items].to(trace.device)
     z, _, _ = encoder(input_points)
-    return z
+    return input_points, z
 
 
 def get_integer(allowed_range: tuple, msg: str='') -> int:
@@ -143,19 +146,35 @@ def sample(_, decoder, args: Options, trace: ViewMem):
 
 
 def hgmms(encoder, decoder, args: Options, trace: ViewMem):
-    z = get_z_by_id(encoder, args, 1, None, trace)
+    input_points, z = get_z_by_id(encoder, args, 1, idx=[3], trace=trace)
     gms = decoder(z)
     num_gms = len(gms)
     vs = []
     splits = []
+    pts_seg = []
+    pi = []
+    mu = []
+    sigma = []
     for i in range(num_gms):
         gms_ = [gms[i] for i in range(i+1)]
-        vs_, splits_ = gm_utils.hierarchical_gm_sample(gms_, trace.points_in_sample)
+        vs_, splits_, pi_, mu_, sigma_ = gm_utils.hierarchical_gm_sample(gms_, trace.points_in_sample,
+                                                                        flatten_sigma=False)
+        pi_ = pi_.squeeze(0).cpu().numpy()
+        mu_ = mu_.squeeze(0).cpu().numpy()
+        sigma_ = sigma_.squeeze(0).cpu().numpy()
+        pi_, mu_, sigma_ = nms.non_max_suppression_3d((pi_, mu_, sigma_), 0.25)
+        print(pi_.shape)
         vs.append(vs_.squeeze(0).cpu().numpy())
         splits.append(splits_.squeeze(0).cpu().numpy())
+        pi.append(pi_)
+        mu.append(mu_)
+        sigma.append(sigma_)
+
+    pts_seg = gm_utils.hgmm_segmentation(gms, input_points)
     palette = create_palettes(splits)
-    im, points = view(vs, splits, palette)
-    return True, (hgmms, ), im, (points, splits, palette)
+    im, sample_points = view(vs, splits, palette)
+    return True, (hgmms, ), im, (input_points.squeeze(0), sample_points, splits, 
+                                pts_seg, palette, pi, mu, sigma)
 
 
 def interpolate(encoder, decoder, args: Options, trace: ViewMem):
@@ -164,7 +183,7 @@ def interpolate(encoder, decoder, args: Options, trace: ViewMem):
         num_interpulate = get_integer((7, 21), msg)
     else:
         num_interpulate = trace.memory[1]
-    z = get_z_by_id(encoder, args, 2, trace.last_idx, trace)
+    input_points, z = get_z_by_id(encoder, args, 2, trace.last_idx, trace)
     gms = decoder.interpulate(z, num_interpulate)
     vs, splits = gm_utils.hierarchical_gm_sample(gms, trace.points_in_sample)
     spread = [vs[i].cpu().numpy() for i in range(vs.shape[0])]
