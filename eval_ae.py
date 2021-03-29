@@ -226,5 +226,5 @@ def evaluate(args: Options, trace: ViewMem):
 
 
 if __name__ == '__main__':
-    cls = 'table'
+    cls = 'airplane'
     evaluate(TrainOptions(tag=cls).load(), ViewMem())

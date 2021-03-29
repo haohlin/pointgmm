@@ -149,6 +149,68 @@ def get_3d_box(box_size, heading_angle, center):
     corners_3d = np.transpose(corners_3d)
     return corners_3d
 
+def cuboid_data(center, size):
+    # suppose axis direction: x: to left; y: to inside; z: to upper
+    # get the (left, outside, bottom) point
+    o = [a - b / 2 for a, b in zip(center, size)]
+    # get the length, width, and height
+    l, w, h = size
+    x = [[o[0], o[0] + l, o[0] + l, o[0], o[0]],  # x coordinate of points in bottom surface
+         [o[0], o[0] + l, o[0] + l, o[0], o[0]],  # x coordinate of points in upper surface
+         [o[0], o[0] + l, o[0] + l, o[0], o[0]],  # x coordinate of points in outside surface
+         [o[0], o[0] + l, o[0] + l, o[0], o[0]]]  # x coordinate of points in inside surface
+    y = [[o[1], o[1], o[1] + w, o[1] + w, o[1]],  # y coordinate of points in bottom surface
+         [o[1], o[1], o[1] + w, o[1] + w, o[1]],  # y coordinate of points in upper surface
+         [o[1], o[1], o[1], o[1], o[1]],          # y coordinate of points in outside surface
+         [o[1] + w, o[1] + w, o[1] + w, o[1] + w, o[1] + w]]    # y coordinate of points in inside surface
+    z = [[o[2], o[2], o[2], o[2], o[2]],                        # z coordinate of points in bottom surface
+         [o[2] + h, o[2] + h, o[2] + h, o[2] + h, o[2] + h],    # z coordinate of points in upper surface
+         [o[2], o[2], o[2] + h, o[2] + h, o[2]],                # z coordinate of points in outside surface
+         [o[2], o[2], o[2] + h, o[2] + h, o[2]]]                # z coordinate of points in inside surface
+    return np.array(x), np.array(y), np.array(z)
+
+def get_corners(x,y,z):
+    x_corners = x[np.r_[0:4,5:9]]
+    y_corners = y[np.r_[0:4,5:9]]
+    z_corners = z[np.r_[0:4,5:9]]
+    corners_3d = np.vstack([x_corners,y_corners,z_corners]).T
+    return corners_3d
+
+
+def plot_gmm(ax, mix, mu, cov, color=None, cmap='Spectral', azim=60, elev=0, numWires=5, wireframe=True):
+    if color is None:
+        color = np.arange(mix.shape[0]) / (mix.shape[0] - 1)
+    if cmap is not None:
+        cmap = cm.get_cmap(cmap)
+        color = cmap(color)
+
+    # u = np.linspace(0.0, 2.0 * np.pi, numWires)
+    # v = np.linspace(0.0, np.pi, numWires)
+    # X = np.outer(np.cos(u), np.sin(v))
+    # Y = np.outer(np.sin(u), np.sin(v))
+    # Z = np.outer(np.ones_like(u), np.cos(v)) 
+    # XYZ = np.stack([X.flatten(), Y.flatten(), Z.flatten()])
+    # print(X.shape, Y.shape, Z.shape)
+    # ax.plot_wireframe(X, Y, Z, rstride=1, cstride=1)
+    alpha = mix / mix.max()
+    ax.view_init(azim=azim, elev=elev)
+    # numWires = 2
+    for k in range(mix.shape[0]):
+        #print(mix[k])
+        # find the rotation matrix and radii of the axes
+        U, s, V = np.linalg.svd(cov[k])
+        X, Y, Z = cuboid_data(mu[k], (3, 3, 3))
+        XYZ = np.stack([X.flatten(), Y.flatten(), Z.flatten()])
+        x, y, z = V.T @ (np.sqrt(s)[:, None] * XYZ) + mu[k][:, None]
+        #print(x.shape)
+        x = x.reshape(4, numWires)
+        y = y.reshape(4, numWires)
+        z = z.reshape(4, numWires)
+        if wireframe:
+            ax.plot_wireframe(x, y, z, rstride=1, cstride=1, color=color[k], alpha=alpha[k])
+        else:
+            ax.plot_surface(x, y, z, rstride=1, cstride=1, color=color[k], alpha=alpha[k])#
+
 def plot_box(points_group):#
     fig = plt.figure(figsize=(20, 20))
     ax = fig.add_subplot(111, projection='3d')
@@ -207,53 +269,56 @@ def plot_box(points_group):#
 def non_max_suppression_3d(gms, nms_th):
     # x:[p, z, w, h, d]
     matplotlib.use( 'tkagg' )
-    pi, mu, sigma = gms
+    pi, mu, cov = gms
 
     #x = [pi]
     box = []
-    for sigma_ in sigma:
-        box_ = 2 * torch.sqrt(5.99 * torch.eig(torch.from_numpy(sigma_))[0][:,0])
-        #box_ = 2 * np.sqrt(5.99 * np.linalg.eigvals(sigma_))
-        #print(np.linalg.eigvals(sigma_))
-        #box_ = 1 * torch.sqrt(torch.eig(torch.from_numpy(sigma_))[0][:,0])
-        #print("before flatten: ", box_)
-        min_ax = torch.argmin(box_)
-        if box_[min_ax] < 0.01:
-            box_[min_ax] = 0.1
-        #print("after flatten: ", box_)
-        box.append(box_.numpy())#
+    for k in range(pi.shape[0]):
+        U, s, V = np.linalg.svd(cov[k])
+        #print("before flatten: ", s)
+        min_pc = np.argmin(s)
+        if s[min_pc] < 0.01:
+            s[min_pc] = 0.01
+        #print("after flatten: ", s)
+        X, Y, Z = cuboid_data([0,0,0], [1,1,1])
+        XYZ = np.stack([X.flatten(), Y.flatten(), Z.flatten()])
+        x, y, z = V.T @ (1*np.sqrt(5.99*s)[:, None] * XYZ) + mu[k][:, None]
+        box.append(get_corners(x,y,z))
     box = np.asarray(box)
     #print(box)
-    x = np.asarray([pi, mu[:, 0], mu[:, 1], mu[:, 2], box[:, 0], box[:, 1], box[:, 2]]).T
+    # x = np.asarray([pi, mu[:, 0], mu[:, 1], mu[:, 2], box[:, 0], box[:, 1], box[:, 2]]).T
+    x = box
     #print(mu[:, 2])
 
     if len(x) == 0:
         return x
 
-    sorted_gm = np.argsort(-x[:, 0])
+    # sorted_gm = np.argsort(-x[:, 0])
+    sorted_gm = np.argsort(-pi)
     x = x[sorted_gm]
     bboxes = [0]
     sorted_corners = [None for i in range(sorted_gm.shape[0])]
     for i in np.arange(1, len(x)):
-        bbox = x[i]
+        # bbox = x[i]
 
-        if sorted_corners[i] is None:
-            corners_3d_ground = get_3d_box(bbox[-3:], 0, bbox[1:4])
-            sorted_corners[i] = corners_3d_ground
-        else: corners_3d_ground = sorted_corners[i]
-
+        # if sorted_corners[i] is None:
+        #     corners_3d_ground = get_3d_box(bbox[-3:], 0, bbox[1:4])
+        #     sorted_corners[i] = corners_3d_ground
+        # else: corners_3d_ground = sorted_corners[i]
+        corners_3d_ground = x[i]
         # print("candidate: ", bbox[4:])
         flag = 1
         for j in range(len(bboxes)):
             # print("compare: ", i, bboxes[j])
-            if sorted_corners[bboxes[j]] is None:
-                corners_3d_predict = get_3d_box(x[bboxes[j]][-3:], 0, x[bboxes[j]][1:4])
-                sorted_corners[bboxes[j]] = corners_3d_predict
-            else: corners_3d_predict = sorted_corners[bboxes[j]]
+            # if sorted_corners[bboxes[j]] is None:
+            #     corners_3d_predict = get_3d_box(x[bboxes[j]][-3:], 0, x[bboxes[j]][1:4])
+            #     sorted_corners[bboxes[j]] = corners_3d_predict
+            # else: corners_3d_predict = sorted_corners[bboxes[j]]
+            corners_3d_predict = x[bboxes[j]]
             #print("corners_3d_predict.z_mean()", corners_3d_predict[:, 1].mean())
             #print("corners_3d_ground.z_mean()", corners_3d_ground[:, 1].mean())
             (IOU_3d,IOU_2d) = box3d_iou(corners_3d_predict,corners_3d_ground)
-            #print("IOU_3d = ",IOU_3d)
+            print("IOU_3d = ",IOU_3d)
             #plot_box([corners_3d_ground, corners_3d_predict])
 
             if IOU_3d > nms_th:
@@ -269,11 +334,11 @@ def non_max_suppression_3d(gms, nms_th):
     sorted_bboxes = np.asarray(bboxes, np.int32)
     sorted_corners = np.asarray(sorted_corners)
     #print([sorted_corners[bboxes][i, :, 1].mean() for i in range(sorted_corners[bboxes].shape[0])])
-    plot_box(sorted_corners[sorted_bboxes])
+    plot_box(x[sorted_bboxes])
     true_bboxes = sorted_gm[sorted_bboxes]
 
     # print("######final bboxe######: ", true_bboxes)
-    return pi[true_bboxes], mu[true_bboxes], sigma[true_bboxes]
+    return pi[true_bboxes], mu[true_bboxes], cov[true_bboxes]
 
 # 3D-IoU-Python: https://github.com/AlienCat-K/3D-IoU-Python.git
 if __name__=='__main__':

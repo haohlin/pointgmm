@@ -84,36 +84,62 @@ def create_color_palette():
        (0, 0, 0)
     ]
 
-def plot_gmm(ax, mix, mu, cov, color=None, cmap='Spectral', azim=60, elev=0, numWires=15, wireframe=True):
+def cuboid_data(center, size):
+    # suppose axis direction: x: to left; y: to inside; z: to upper
+    # get the (left, outside, bottom) point
+    o = [a - b / 2 for a, b in zip(center, size)]
+    # get the length, width, and height
+    l, w, h = size
+    x = [[o[0], o[0] + l, o[0] + l, o[0], o[0]],  # x coordinate of points in bottom surface
+         [o[0], o[0] + l, o[0] + l, o[0], o[0]],  # x coordinate of points in upper surface
+         [o[0], o[0] + l, o[0] + l, o[0], o[0]],  # x coordinate of points in outside surface
+         [o[0], o[0] + l, o[0] + l, o[0], o[0]]]  # x coordinate of points in inside surface
+    y = [[o[1], o[1], o[1] + w, o[1] + w, o[1]],  # y coordinate of points in bottom surface
+         [o[1], o[1], o[1] + w, o[1] + w, o[1]],  # y coordinate of points in upper surface
+         [o[1], o[1], o[1], o[1], o[1]],          # y coordinate of points in outside surface
+         [o[1] + w, o[1] + w, o[1] + w, o[1] + w, o[1] + w]]    # y coordinate of points in inside surface
+    z = [[o[2], o[2], o[2], o[2], o[2]],                        # z coordinate of points in bottom surface
+         [o[2] + h, o[2] + h, o[2] + h, o[2] + h, o[2] + h],    # z coordinate of points in upper surface
+         [o[2], o[2], o[2] + h, o[2] + h, o[2]],                # z coordinate of points in outside surface
+         [o[2], o[2], o[2] + h, o[2] + h, o[2]]]                # z coordinate of points in inside surface
+    return np.array(x), np.array(y), np.array(z)
+
+
+def plot_gmm(ax, mix, mu, cov, color=None, cmap='Spectral', azim=60, elev=0, numWires=15, wireframe=True, plot_box=True):
     if color is None:
         color = np.arange(mix.shape[0]) / (mix.shape[0] - 1)
     if cmap is not None:
         cmap = cm.get_cmap(cmap)
         color = cmap(color)
 
-    u = np.linspace(0.0, 2.0 * np.pi, numWires)
-    v = np.linspace(0.0, np.pi, numWires)
-    X = np.outer(np.cos(u), np.sin(v))
-    Y = np.outer(np.sin(u), np.sin(v))
-    Z = np.outer(np.ones_like(u), np.cos(v)) 
-    XYZ = np.stack([X.flatten(), Y.flatten(), Z.flatten()])
-
+    if not plot_box:
+        u = np.linspace(0.0, 2.0 * np.pi, numWires)
+        v = np.linspace(0.0, np.pi, numWires)
+        X = np.outer(np.cos(u), np.sin(v))
+        Y = np.outer(np.sin(u), np.sin(v))
+        Z = np.outer(np.ones_like(u), np.cos(v)) 
+        XYZ = np.stack([X.flatten(), Y.flatten(), Z.flatten()])
     alpha = mix / mix.max()
     ax.view_init(azim=azim, elev=elev)
 
     for k in range(mix.shape[0]):
+        #print(mix[k])
         # find the rotation matrix and radii of the axes
         U, s, V = np.linalg.svd(cov[k])
-        x, y, z = V.T @ (np.sqrt(s)[:, None] * XYZ) + mu[k][:, None]
-        #print(x.shape)
-        x = x.reshape(numWires, numWires)
-        #print(x.shape)
-        y = y.reshape(numWires, numWires)
-        z = z.reshape(numWires, numWires)
+        if plot_box:
+            X, Y, Z = cuboid_data([0,0,0], [1,1,1])#mu[k]
+            XYZ = np.stack([X.flatten(), Y.flatten(), Z.flatten()])
+            numWires_x = 4
+            numWires = 5
+        x, y, z = V.T @ (1.2*np.sqrt(5.99*s)[:, None] * XYZ) + mu[k][:, None]#
+        x = x.reshape(numWires_x, numWires)
+        y = y.reshape(numWires_x, numWires)
+        z = z.reshape(numWires_x, numWires)
+
         if wireframe:
             ax.plot_wireframe(x, y, z, rstride=1, cstride=1, color=color[k], alpha=alpha[k])
         else:
-            ax.plot_surface(x, y, z, rstride=1, cstride=1, color=color[k], alpha=alpha[k])
+            ax.plot_surface(x, y, z, rstride=1, cstride=1, color=color[k], alpha=alpha[k])#
 
 def plot_pcd(ax, pcd, color=None, cmap='Spectral', size=4, alpha=0.9, azim=60, elev=0):
     if color is None:
@@ -140,7 +166,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='HGMM and segmentation visualization')
     #parser.add_argument('--input', type=str, default='generated/chair_vae/eval_points/hgmms/hgmms_000_00.npz')
     parser.add_argument('--obj_class', type=str, default='chair')
-    parser.add_argument('--id', type=str, default='1')
+    parser.add_argument('--id', type=str, default='003_00')
     parser.add_argument('--save_ply', action='store_true')
     #parser.add_argument('--num_pts', help='number of input points', default=50000, type=int)
     parser.add_argument('--output_dir', type=str, default='generated/ply/')
