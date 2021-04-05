@@ -155,13 +155,13 @@ def cuboid_data(center, size):
     o = [a - b / 2 for a, b in zip(center, size)]
     # get the length, width, and height
     l, w, h = size
-    x = [[o[0], o[0] + l, o[0] + l, o[0], o[0]],  # x coordinate of points in bottom surface
-         [o[0], o[0] + l, o[0] + l, o[0], o[0]],  # x coordinate of points in upper surface
-         [o[0], o[0] + l, o[0] + l, o[0], o[0]],  # x coordinate of points in outside surface
-         [o[0], o[0] + l, o[0] + l, o[0], o[0]]]  # x coordinate of points in inside surface
-    y = [[o[1], o[1], o[1] + w, o[1] + w, o[1]],  # y coordinate of points in bottom surface
-         [o[1], o[1], o[1] + w, o[1] + w, o[1]],  # y coordinate of points in upper surface
-         [o[1], o[1], o[1], o[1], o[1]],          # y coordinate of points in outside surface
+    x = [[o[0], o[0] + l, o[0] + l, o[0], o[0]],                # x coordinate of points in bottom surface
+         [o[0], o[0] + l, o[0] + l, o[0], o[0]],                # x coordinate of points in upper surface
+         [o[0], o[0] + l, o[0] + l, o[0], o[0]],                # x coordinate of points in outside surface
+         [o[0], o[0] + l, o[0] + l, o[0], o[0]]]                # x coordinate of points in inside surface
+    y = [[o[1], o[1], o[1] + w, o[1] + w, o[1]],                # y coordinate of points in bottom surface
+         [o[1], o[1], o[1] + w, o[1] + w, o[1]],                # y coordinate of points in upper surface
+         [o[1], o[1], o[1], o[1], o[1]],                        # y coordinate of points in outside surface
          [o[1] + w, o[1] + w, o[1] + w, o[1] + w, o[1] + w]]    # y coordinate of points in inside surface
     z = [[o[2], o[2], o[2], o[2], o[2]],                        # z coordinate of points in bottom surface
          [o[2] + h, o[2] + h, o[2] + h, o[2] + h, o[2] + h],    # z coordinate of points in upper surface
@@ -269,20 +269,21 @@ def plot_box(points_group):#
 def non_max_suppression_3d(gms, nms_th):
     # x:[p, z, w, h, d]
     matplotlib.use( 'tkagg' )
-    pi, mu, cov = gms
+    pi, mu, cov, SVD = gms
+    s = SVD['s']
+    V = SVD['V']
 
     #x = [pi]
     box = []
     for k in range(pi.shape[0]):
-        U, s, V = np.linalg.svd(cov[k])
         #print("before flatten: ", s)
-        min_pc = np.argmin(s)
-        if s[min_pc] < 0.01:
-            s[min_pc] = 0.01
+        min_pc = np.argmin(s[k])
+        if s[k, min_pc] < 0.01:
+            s[k, min_pc] = 0.01
         #print("after flatten: ", s)
         X, Y, Z = cuboid_data([0,0,0], [1,1,1])
         XYZ = np.stack([X.flatten(), Y.flatten(), Z.flatten()])
-        x, y, z = V.T @ (1*np.sqrt(5.99*s)[:, None] * XYZ) + mu[k][:, None]
+        x, y, z = V[k].T @ (1*np.sqrt(5.99*s[k])[:, None] * XYZ) + mu[k][:, None]
         box.append(get_corners(x,y,z))
     box = np.asarray(box)
     #print(box)
@@ -318,7 +319,7 @@ def non_max_suppression_3d(gms, nms_th):
             #print("corners_3d_predict.z_mean()", corners_3d_predict[:, 1].mean())
             #print("corners_3d_ground.z_mean()", corners_3d_ground[:, 1].mean())
             (IOU_3d,IOU_2d) = box3d_iou(corners_3d_predict,corners_3d_ground)
-            print("IOU_3d = ",IOU_3d)
+            # print("IOU_3d = ",IOU_3d)
             #plot_box([corners_3d_ground, corners_3d_predict])
 
             if IOU_3d > nms_th:
@@ -336,6 +337,9 @@ def non_max_suppression_3d(gms, nms_th):
     #print([sorted_corners[bboxes][i, :, 1].mean() for i in range(sorted_corners[bboxes].shape[0])])
     plot_box(x[sorted_bboxes])
     true_bboxes = sorted_gm[sorted_bboxes]
+    SVD['U'] = SVD['U'][true_bboxes]
+    SVD['s'] = SVD['s'][true_bboxes]
+    SVD['V'] = SVD['V'][true_bboxes]
 
     # print("######final bboxe######: ", true_bboxes)
     return pi[true_bboxes], mu[true_bboxes], cov[true_bboxes]

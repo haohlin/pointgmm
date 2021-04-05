@@ -131,7 +131,7 @@ def plot_gmm(ax, mix, mu, cov, color=None, cmap='Spectral', azim=60, elev=0, num
             XYZ = np.stack([X.flatten(), Y.flatten(), Z.flatten()])
             numWires_x = 4
             numWires = 5
-        x, y, z = V.T @ (1.2*np.sqrt(5.99*s)[:, None] * XYZ) + mu[k][:, None]#
+        x, y, z = V.T @ (1.2*np.sqrt(5.99*s)[:, None] * XYZ) + mu[k][:, None]#V.T
         x = x.reshape(numWires_x, numWires)
         y = y.reshape(numWires_x, numWires)
         z = z.reshape(numWires_x, numWires)
@@ -165,8 +165,8 @@ def parse_args():
     """
     parser = argparse.ArgumentParser(description='HGMM and segmentation visualization')
     #parser.add_argument('--input', type=str, default='generated/chair_vae/eval_points/hgmms/hgmms_000_00.npz')
-    parser.add_argument('--obj_class', type=str, default='chair')
-    parser.add_argument('--id', type=str, default='003_00')
+    parser.add_argument('--obj_class', type=str, default='table')
+    parser.add_argument('--id', type=str, default='003_01')
     parser.add_argument('--save_ply', action='store_true')
     #parser.add_argument('--num_pts', help='number of input points', default=50000, type=int)
     parser.add_argument('--output_dir', type=str, default='generated/ply/')

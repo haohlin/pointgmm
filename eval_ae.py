@@ -1,13 +1,17 @@
 import models.model_factory as factory
 import models.gm_utils as gm_utils
 import models.nms as nms
+import matplotlib.pyplot as plt
+
+from sklearn.mixture import GaussianMixture
+from sklearn.mixture._gaussian_mixture import _compute_precision_cholesky
+from fitters.plane_fitter import PlaneFitter
 from options import TrainOptions, Options
 from constants import OUT_DIR
 from show.view_utils import view
 from custom_types import *
 from process_data.mesh_loader import get_loader, AnotherLoaderWrap
 from process_data.files_utils import collect, init_folders
-import matplotlib.pyplot as plt
 
 
 class ViewMem:
@@ -158,19 +162,45 @@ def hgmms(encoder, decoder, args: Options, trace: ViewMem):
     for i in range(num_gms):
         gms_ = [gms[i] for i in range(i+1)]
         vs_, splits_, pi_, mu_, sigma_ = gm_utils.hierarchical_gm_sample(gms_, trace.points_in_sample,
-                                                                        flatten_sigma=False)
+                                                                        flatten_sigma=True)
         pi_ = pi_.squeeze(0).cpu().numpy()
         mu_ = mu_.squeeze(0).cpu().numpy()
         sigma_ = sigma_.squeeze(0).cpu().numpy()
-        pi_, mu_, sigma_ = nms.non_max_suppression_3d((pi_, mu_, sigma_), 0.25)
-        print(pi_.shape)
+
+        U, s, V = np.linalg.svd(sigma_)
+        SVD = {
+        'U': U, # kx3x3
+        's': s, # kx3
+        'V': V  # kx3x3
+        }
+
+        pi_, mu_, sigma_ = nms.non_max_suppression_3d((pi_, mu_, sigma_, SVD), 0.25)
+
+        gmm = GaussianMixture(n_components=pi_.shape[0])
+        gmm.weights_ = pi_              # K
+        gmm.means_ = mu_                # Kx3
+        gmm.covariances_ = sigma_       # Kx3x3
+        gmm.precisions_cholesky_ = _compute_precision_cholesky(sigma_, gmm.covariance_type)
+        pt_membership_ = gmm.predict(input_points.squeeze(0))
+        pts_seg.append(pt_membership_)
+
+        fitter_feed = {
+        'P': input_points.squeeze(0),   # 1xNx3
+        'W': pt_membership_,            # 1xN
+        'GMM': gmm,            # 1xN
+        'SVD': SVD
+        # 'normal_per_point': normal_per_point,
+        }
+        parameters = {}
+        PlaneFitter.compute_parameters(fitter_feed, parameters, plot=True)
+        
         vs.append(vs_.squeeze(0).cpu().numpy())
         splits.append(splits_.squeeze(0).cpu().numpy())
         pi.append(pi_)
         mu.append(mu_)
         sigma.append(sigma_)
 
-    pts_seg = gm_utils.hgmm_segmentation(gms, input_points)
+    # pts_seg = gm_utils.hgmm_segmentation(gms, input_points)
     palette = create_palettes(splits)
     im, sample_points = view(vs, splits, palette)
     return True, (hgmms, ), im, (input_points.squeeze(0), sample_points, splits, 
@@ -226,5 +256,5 @@ def evaluate(args: Options, trace: ViewMem):
 
 
 if __name__ == '__main__':
-    cls = 'airplane'
+    cls = 'table'
     evaluate(TrainOptions(tag=cls).load(), ViewMem())
