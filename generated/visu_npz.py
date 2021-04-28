@@ -1,10 +1,42 @@
-import numpy as np
 import argparse
 import os
+import torch
+import numpy as np
+import kaolin as kal
+import kaolin.ops.mesh as kmesh
 from matplotlib import cm
 from matplotlib import pyplot as plt
 from matplotlib.colors import ListedColormap
 from mpl_toolkits.mplot3d import Axes3D
+
+def set_axes_equal(ax):
+    '''
+    Source: https://stackoverflow.com/a/31364297
+    Make axes of 3D plot have equal scale so that spheres appear as spheres,
+    cubes as cubes, etc..  This is one possible solution to Matplotlib's
+    ax.set_aspect('equal') and ax.axis('equal') not working for 3D.
+
+    Input
+      ax: a matplotlib axis, e.g., as output from plt.gca().
+    '''
+    x_limits = ax.get_xlim3d()
+    y_limits = ax.get_ylim3d()
+    z_limits = ax.get_zlim3d()
+
+    x_range = abs(x_limits[1] - x_limits[0])
+    x_middle = np.mean(x_limits)
+    y_range = abs(y_limits[1] - y_limits[0])
+    y_middle = np.mean(y_limits)
+    z_range = abs(z_limits[1] - z_limits[0])
+    z_middle = np.mean(z_limits)
+
+    # The plot bounding box is a sphere in the sense of the infinity
+    # norm, hence I call half the max range the plot radius.
+    plot_radius = 0.5*max([x_range, y_range, z_range])
+
+    ax.set_xlim3d([x_middle - plot_radius, x_middle + plot_radius])
+    ax.set_ylim3d([y_middle - plot_radius, y_middle + plot_radius])
+    ax.set_zlim3d([z_middle - plot_radius, z_middle + plot_radius])
 
 def write_ply(verts, output_file, colors=None, indices=None):
     if colors is None:
@@ -84,6 +116,22 @@ def create_color_palette():
        (0, 0, 0)
     ]
 
+def get_corners(x,y,z):
+    x_corners = x[np.r_[0:4,5:9]]
+    y_corners = y[np.r_[0:4,5:9]]
+    z_corners = z[np.r_[0:4,5:9]]
+    corners_3d = np.vstack([x_corners,y_corners,z_corners]).T
+    return torch.tensor(corners_3d)
+
+def cuboid_faces(k):
+    bottom = [[0,1,2], [0,2,3]]
+    upper = [[4,5,6], [4,6,7]]
+    front = [[0,1,5], [0,5,4]]
+    back = [[3,2,6], [3,6,7]]
+    left = [[0,4,7], [0,7,3]]
+    right = [[1,2,6], [1,6,5]]
+    return torch.tensor(bottom + upper + front + back + left + right) + 8 * k 
+
 def cuboid_data(center, size):
     # suppose axis direction: x: to left; y: to inside; z: to upper
     # get the (left, outside, bottom) point
@@ -115,13 +163,20 @@ def plot_gmm(ax, mix, mu, cov, color=None, cmap='Spectral', azim=60, elev=0, num
     if not plot_box:
         u = np.linspace(0.0, 2.0 * np.pi, numWires)
         v = np.linspace(0.0, np.pi, numWires)
-        X = np.outer(np.cos(u), np.sin(v))
-        Y = np.outer(np.sin(u), np.sin(v))
-        Z = np.outer(np.ones_like(u), np.cos(v)) 
+        # X = np.outer(np.cos(u), np.sin(v))
+        # Y = np.outer(np.sin(u), np.sin(v))
+        # Z = np.outer(np.ones_like(u), np.cos(v)) 
+
+        X = sphere_mesh.vertices[:, 0]
+        Y = sphere_mesh.vertices[:, 1]
+        Z = sphere_mesh.vertices[:, 2]
         XYZ = np.stack([X.flatten(), Y.flatten(), Z.flatten()])
+        numWires_x = numWires
     alpha = mix / mix.max()
     ax.view_init(azim=azim, elev=elev)
-
+    vertices = []
+    faces = []
+    voxels = []
     for k in range(mix.shape[0]):
         #print(mix[k])
         # find the rotation matrix and radii of the axes
@@ -131,15 +186,54 @@ def plot_gmm(ax, mix, mu, cov, color=None, cmap='Spectral', azim=60, elev=0, num
             XYZ = np.stack([X.flatten(), Y.flatten(), Z.flatten()])
             numWires_x = 4
             numWires = 5
-        x, y, z = V.T @ (1.2*np.sqrt(5.99*s)[:, None] * XYZ) + mu[k][:, None]#V.T
+        xyz_stretch = np.sqrt(5.99*s)[:, None] * XYZ # 1.2*np.sqrt(5.99*s)[:, None] * XYZ
+        xyz = V.T @ (xyz_stretch) + mu[k][:, None]#V.T
+        x, y, z = xyz
+        if plot_box:
+            corners = get_corners(x, y, z)
+            box_faces = cuboid_faces(k)
+            vertices.append(corners)
+            faces.append(box_faces)
+            # vox = kal.ops.conversions.trianglemeshes_to_voxelgrids(corners.unsqueeze(0), cuboid_faces(0), 20).squeeze(0) # N x N x N
+            # voxels.append(vox) # K x N x N x N
+        else:
+            vertices.append(torch.from_numpy(xyz.T))
+            faces.append(sphere_mesh.faces + sphere_mesh.vertices.shape[0] * k)
         x = x.reshape(numWires_x, numWires)
         y = y.reshape(numWires_x, numWires)
         z = z.reshape(numWires_x, numWires)
 
         if wireframe:
+            # ax.scatter(X.flatten(), Y.flatten(), Z.flatten())
             ax.plot_wireframe(x, y, z, rstride=1, cstride=1, color=color[k], alpha=alpha[k])
         else:
-            ax.plot_surface(x, y, z, rstride=1, cstride=1, color=color[k], alpha=alpha[k])#
+            ax.plot_surface(x, y, z, rstride=1, cstride=1, color=color[k], alpha=alpha[k])
+    # ax.set_axis_off()
+    if plot_box:
+        vertices = torch.cat(vertices, dim=0) # k x 8 x 3 -> 8k x 3
+        faces = torch.cat(faces, dim=0) # k x 12 x 3 -> 12k x 3
+        # voxels = kal.ops.conversions.trianglemeshes_to_voxelgrids(vertices.unsqueeze(0), faces, 80).squeeze() # N x N x N
+        # voxels = kal.ops.voxelgrid.fill(voxels).squeeze()
+        # timelapse.add_mesh_batch(
+        #     iteration=0,
+        #     category='box_table',
+        #     vertices_list=[vertices],
+        #     faces_list=[faces]
+        # )    
+        # timelapse.add_voxelgrid_batch(
+        #     iteration=0,
+        #     category='voxel_table',
+        #     voxelgrid_list=[voxels] # K x N x N x N
+        # )    
+    else:
+        vertices = torch.cat(vertices, dim=0) # k x n_verts x 3 -> 8k x 3
+        faces = torch.cat(faces, dim=0) # k x 12 x 3 -> 12k x 3
+        timelapse.add_mesh_batch(
+            iteration=0,
+            category='hgmm_airplane',
+            vertices_list=[vertices],
+            faces_list=[faces]
+        )    
 
 def plot_pcd(ax, pcd, color=None, cmap='Spectral', size=4, alpha=0.9, azim=60, elev=0):
     if color is None:
@@ -166,7 +260,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='HGMM and segmentation visualization')
     #parser.add_argument('--input', type=str, default='generated/chair_vae/eval_points/hgmms/hgmms_000_00.npz')
     parser.add_argument('--obj_class', type=str, default='table')
-    parser.add_argument('--id', type=str, default='003_01')
+    parser.add_argument('--id', type=str, default='006_00')
     parser.add_argument('--save_ply', action='store_true')
     #parser.add_argument('--num_pts', help='number of input points', default=50000, type=int)
     parser.add_argument('--output_dir', type=str, default='generated/ply/')
@@ -206,22 +300,51 @@ if __name__ == "__main__":
         vert_sample_colors[start:end] = color_palette[i % 45]
         #colors[start:end] = npz_data["palette"][i]
     
-
     fig = plt.figure(figsize=(20, 20))
 
     ax = fig.add_subplot(121, projection='3d')
     #pts_seg = [np.asarray(create_color_palette()[pts_seg[i]%45])/255 for i in range(pts_seg.shape[0])]
     seg_color = pts_seg / (splits.shape[0]-1)
 
+    logs_path = './logs/'
+    # npz_airplane = np.load("generated/airplane_vae/eval_points/hgmms/hgmms_" + args.id + ".npz")
+    # npz_table = np.load("generated/table_vae/eval_points/hgmms/hgmms_" + args.id + ".npz")
+    # npz_chair = np.load("generated/chair_vae/eval_points/hgmms/hgmms_" + args.id + ".npz")
+    # airplane_pts = npz_airplane['input_points']
+    # table_pts = npz_table['input_points']
+    # chair_pts = npz_chair['input_points']
+
+    timelapse = kal.visualize.Timelapse(logs_path)
+    # timelapse.add_pointcloud_batch(
+    #     iteration=1,
+    #     pointcloud_list=[torch.from_numpy(airplane_pts * 10), 
+    #                      torch.from_numpy(table_pts), 
+    #                      torch.from_numpy(chair_pts)
+    #                     ]
+    #     # semantic_ids=[torch.from_numpy(pts_seg)]
+    # )
+
+    sphere_mesh = kal.io.obj.import_mesh('./generated/sphere.obj', with_materials=True)
+    # the sphere is usually too small (this is fine-tuned for the clock)
+    # vertices = mesh.vertices.cuda() * 75
+    # faces = mesh.faces
+    # timelapse.add_mesh_batch(
+    #     iteration=0,
+    #     # category='optimized_mesh',
+    #     vertices_list=[vertices],
+    #     faces_list=[mesh.faces]
+    # )
+
     plot_pcd(ax, input_pts, color=seg_color, cmap=newcmp)
     #plot_gmm(ax, pi, mu, sigma, cmap=newcmp)
     ax.set_title("point cloud segmentation")
 
     ax = fig.add_subplot(122, projection='3d')
-    plot_pcd(ax, sample_pts, color=sample_color, cmap=newcmp)
+    # plot_pcd(ax, sample_pts, color=sample_color, cmap=newcmp)
+    # plot_pcd(ax, input_pts, color=seg_color, cmap=newcmp)
     plot_gmm(ax, pi, mu, sigma, cmap=newcmp, wireframe=False)#, color=npz_data["palette"])
     ax.set_title("point cloud (with GMM)")
-
+    set_axes_equal(ax)
     plt.tight_layout()
 
     plt.show()

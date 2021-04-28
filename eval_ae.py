@@ -2,17 +2,23 @@ import models.model_factory as factory
 import models.gm_utils as gm_utils
 import models.nms as nms
 import matplotlib.pyplot as plt
+import kaolin as kal
 
 from sklearn.mixture import GaussianMixture
 from sklearn.mixture._gaussian_mixture import _compute_precision_cholesky
 from fitters.plane_fitter import PlaneFitter
+from fitters.sphere_fitter import SphereFitter
 from options import TrainOptions, Options
 from constants import OUT_DIR
 from show.view_utils import view
 from custom_types import *
 from process_data.mesh_loader import get_loader, AnotherLoaderWrap
 from process_data.files_utils import collect, init_folders
+from show.view_utils import set_axes_equal
 
+from matplotlib import pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+import matplotlib
 
 class ViewMem:
 
@@ -150,7 +156,7 @@ def sample(_, decoder, args: Options, trace: ViewMem):
 
 
 def hgmms(encoder, decoder, args: Options, trace: ViewMem):
-    input_points, z = get_z_by_id(encoder, args, 1, idx=[3], trace=trace)
+    input_points, z = get_z_by_id(encoder, args, 1, idx=[6], trace=trace)
     gms = decoder(z)
     num_gms = len(gms)
     vs = []
@@ -162,10 +168,16 @@ def hgmms(encoder, decoder, args: Options, trace: ViewMem):
     for i in range(num_gms):
         gms_ = [gms[i] for i in range(i+1)]
         vs_, splits_, pi_, mu_, sigma_ = gm_utils.hierarchical_gm_sample(gms_, trace.points_in_sample,
-                                                                        flatten_sigma=True)
+                                                                        flatten_sigma=False)
         pi_ = pi_.squeeze(0).cpu().numpy()
         mu_ = mu_.squeeze(0).cpu().numpy()
         sigma_ = sigma_.squeeze(0).cpu().numpy()
+
+        # timelapse.add_pointcloud_batch(
+        #     iteration=epoch,
+        #     pointcloud_list=[vertices_batch[0]],
+        #     semantic_ids=pbr_material
+        # )
 
         U, s, V = np.linalg.svd(sigma_)
         SVD = {
@@ -184,16 +196,30 @@ def hgmms(encoder, decoder, args: Options, trace: ViewMem):
         pt_membership_ = gmm.predict(input_points.squeeze(0))
         pts_seg.append(pt_membership_)
 
+        W = np.zeros((1, pt_membership_.shape[0], pt_membership_.max()+1), dtype=np.float32)
+        for idx, a_i in enumerate(pt_membership_):
+            W[0, idx, a_i] = 1
+
         fitter_feed = {
-        'P': input_points.squeeze(0),   # 1xNx3
-        'W': pt_membership_,            # 1xN
+        'P': input_points,   # 1xNx3
+        'W': W,            # 1xN
         'GMM': gmm,            # 1xN
         'SVD': SVD
         # 'normal_per_point': normal_per_point,
         }
         parameters = {}
-        PlaneFitter.compute_parameters(fitter_feed, parameters, plot=True)
-        
+
+        matplotlib.use( 'tkagg' )
+        fig = plt.figure(figsize=(20, 20))
+        ax = fig.add_subplot(111, projection='3d')
+        ax.view_init(azim=60, elev=0)
+
+        PlaneFitter.compute_parameters(fitter_feed, parameters, ax, plot=True)
+        SphereFitter.compute_parameters(fitter_feed, parameters, ax, plot=False)
+        ax.scatter(input_points[0, :, 0], input_points[0, :, 1], input_points[0, :, 2])
+        set_axes_equal(ax)
+        plt.show()
+
         vs.append(vs_.squeeze(0).cpu().numpy())
         splits.append(splits_.squeeze(0).cpu().numpy())
         pi.append(pi_)
@@ -257,4 +283,6 @@ def evaluate(args: Options, trace: ViewMem):
 
 if __name__ == '__main__':
     cls = 'table'
+    # logs_path = './logs/'
+    # timelapse = kal.visualize.Timelapse(logs_path)
     evaluate(TrainOptions(tag=cls).load(), ViewMem())

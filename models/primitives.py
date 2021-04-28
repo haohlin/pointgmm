@@ -88,6 +88,26 @@ class Plane: # A finite plane patch spanned by x_axis and y_axis
         ax.plot_surface(x, y, z, rstride=1, cstride=1, alpha=alpha)
         # plt.show()
     
+    def extract_predicted_parameters_as_json(self):
+        json_info = {
+            'type': 'plane',
+            'center_x': self.center[0],
+            'center_y': self.center[1],
+            'center_z': self.center[2], 
+            'normal_x': self.n[0],
+            'normal_y': self.n[1],
+            'normal_z': self.n[2],
+            'x_size': self.x_range[1] - self.x_range[0],
+            'y_size': self.y_range[1] - self.y_range[0],
+            'x_axis_x': self.x_axis[0],
+            'x_axis_y': self.x_axis[1],
+            'x_axis_z': self.x_axis[2],
+            'y_axis_x': self.y_axis[0],
+            'y_axis_y': self.y_axis[1],
+            'y_axis_z': self.y_axis[2],
+        }
+        return json_info
+
     @classmethod
     def create_random(cls, intercept_range=[-1, 1]):
         return cls(make_rand_unit_vector(), random.uniform(*intercept_range))

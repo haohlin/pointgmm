@@ -4,6 +4,8 @@ __pycache__
 
 checkpoints/
 dataset/
+usd/
+logs/
 *.npz
 *.npy
 *.gif

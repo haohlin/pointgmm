@@ -10,144 +10,37 @@ from matplotlib import cm
 from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection, Line3DCollection
 import matplotlib.pyplot as plt
+import kaolin as kal
+from kaolin.ops.conversions import trianglemeshes_to_voxelgrids as mesh2voxel
 
-def polygon_clip(subjectPolygon, clipPolygon):
-   """ Clip a polygon with another polygon.
-   Ref: https://rosettacode.org/wiki/Sutherland-Hodgman_polygon_clipping#Python
-   Args:
-     subjectPolygon: a list of (x,y) 2d points, any polygon.
-     clipPolygon: a list of (x,y) 2d points, has to be *convex*
-   Note:
-     **points have to be counter-clockwise ordered**
-   Return:
-     a list of (x,y) vertex point for the intersection polygon.
-   """
-   def inside(p):
-      return(cp2[0]-cp1[0])*(p[1]-cp1[1]) > (cp2[1]-cp1[1])*(p[0]-cp1[0])
- 
-   def computeIntersection():
-      dc = [ cp1[0] - cp2[0], cp1[1] - cp2[1] ]
-      dp = [ s[0] - e[0], s[1] - e[1] ]
-      n1 = cp1[0] * cp2[1] - cp1[1] * cp2[0]
-      n2 = s[0] * e[1] - s[1] * e[0] 
-      n3 = 1.0 / (dc[0] * dp[1] - dc[1] * dp[0])
-      return [(n1*dp[0] - n2*dc[0]) * n3, (n1*dp[1] - n2*dc[1]) * n3]
- 
-   outputList = subjectPolygon
-   cp1 = clipPolygon[-1]
- 
-   for clipVertex in clipPolygon:
-      cp2 = clipVertex
-      inputList = outputList
-      outputList = []
-      s = inputList[-1]
- 
-      for subjectVertex in inputList:
-         e = subjectVertex
-         if inside(e):
-            if not inside(s):
-               outputList.append(computeIntersection())
-            outputList.append(e)
-         elif inside(s):
-            outputList.append(computeIntersection())
-         s = e
-      cp1 = cp2
-      if len(outputList) == 0:
-          return None
-   return(outputList)
-
-def poly_area(x,y):
-    """ Ref: http://stackoverflow.com/questions/24467972/calculate-area-of-polygon-given-x-y-coordinates """
-    return 0.5*np.abs(np.dot(x,np.roll(y,1))-np.dot(y,np.roll(x,1)))
-
-def convex_hull_intersection(p1, p2):
-    """ Compute area of two convex hull's intersection area.
-        p1,p2 are a list of (x,y) tuples of hull vertices.
-        return a list of (x,y) for the intersection and its volume
-    """
-    inter_p = polygon_clip(p1,p2)
-    if inter_p is not None:
-        hull_inter = ConvexHull(inter_p)
-        return inter_p, hull_inter.volume
-    else:
-        return None, 0.0  
-
-def box3d_vol(corners):
-    ''' corners: (8,3) no assumption on axis direction '''
-    a = np.sqrt(np.sum((corners[0,:] - corners[1,:])**2))
-    b = np.sqrt(np.sum((corners[1,:] - corners[2,:])**2))
-    c = np.sqrt(np.sum((corners[0,:] - corners[4,:])**2))
-    return a*b*c
-
-def is_clockwise(p):
-    x = p[:,0]
-    y = p[:,1]
-    return np.dot(x,np.roll(y,1))-np.dot(y,np.roll(x,1)) > 0
-
-def box3d_iou(corners1, corners2):
-    ''' Compute 3D bounding box IoU.
-    Input:
-        corners1: numpy array (8,3), assume up direction is negative Y
-        corners2: numpy array (8,3), assume up direction is negative Y
-    Output:
-        iou: 3D bounding box IoU
-        iou_2d: bird's eye view 2D bounding box IoU
-    todo (kent): add more description on corner points' orders.
+def set_axes_equal(ax):
     '''
-    # corner points are in counter clockwise order
-    rect1 = [(corners1[i,0], corners1[i,2]) for i in range(3,-1,-1)]
-    rect2 = [(corners2[i,0], corners2[i,2]) for i in range(3,-1,-1)] 
-    
-    area1 = poly_area(np.array(rect1)[:,0], np.array(rect1)[:,1])
-    area2 = poly_area(np.array(rect2)[:,0], np.array(rect2)[:,1])
-   
-    inter, inter_area = convex_hull_intersection(rect1, rect2)
-    iou_2d = inter_area/(area1+area2-inter_area)
-    ymax = min(corners1[0,1], corners2[0,1])
-    ymin = max(corners1[4,1], corners2[4,1])
+    Source: https://stackoverflow.com/a/31364297
+    Make axes of 3D plot have equal scale so that spheres appear as spheres,
+    cubes as cubes, etc..  This is one possible solution to Matplotlib's
+    ax.set_aspect('equal') and ax.axis('equal') not working for 3D.
 
-    inter_vol = inter_area * max(0.0, ymax-ymin)
-    
-    vol1 = box3d_vol(corners1)
-    vol2 = box3d_vol(corners2)
-    iou = inter_vol / (vol1 + vol2 - inter_vol)
-    return iou, iou_2d
-
-# ----------------------------------
-# Helper functions for evaluation
-# ----------------------------------
-
-def get_3d_box(box_size, heading_angle, center):
-    ''' Calculate 3D bounding box corners from its parameterization.
-    Input:
-        box_size: tuple of (length,wide,height)
-        heading_angle: rad scalar, clockwise from pos x axis
-        center: tuple of (x,y,z)
-    Output:
-        corners_3d: numpy array of shape (8,3) for 3D box cornders
+    Input
+      ax: a matplotlib axis, e.g., as output from plt.gca().
     '''
-    def roty(t):
-        c = np.cos(t)
-        s = np.sin(t)
-        return np.array([[c,  0,  s],
-                         [0,  1,  0],
-                         [-s, 0,  c]])
+    x_limits = ax.get_xlim3d()
+    y_limits = ax.get_ylim3d()
+    z_limits = ax.get_zlim3d()
 
-    R = roty(heading_angle)
-    l,w,h = box_size
-    x_corners = [l/2,l/2,-l/2,-l/2,l/2,l/2,-l/2,-l/2]
-    # y_corners = [h/2,h/2,h/2,h/2,-h/2,-h/2,-h/2,-h/2]
-    # z_corners = [w/2,-w/2,-w/2,w/2,w/2,-w/2,-w/2,w/2]
-    y_corners = [w/2,w/2,w/2,w/2,-w/2,-w/2,-w/2,-w/2]
-    z_corners = [h/2,-h/2,-h/2,h/2,h/2,-h/2,-h/2,h/2]
-    #corners_3d = np.dot(R, np.vstack([x_corners,y_corners,z_corners]))
-    #print(corners_3d.shape)
-    corners_3d = np.vstack([x_corners,y_corners,z_corners])
-    corners_3d[0,:] = corners_3d[0,:] + center[0]
-    corners_3d[1,:] = corners_3d[1,:] + center[1]
-    corners_3d[2,:] = corners_3d[2,:] + center[2]
-    corners_3d = np.transpose(corners_3d)
-    return corners_3d
+    x_range = abs(x_limits[1] - x_limits[0])
+    x_middle = np.mean(x_limits)
+    y_range = abs(y_limits[1] - y_limits[0])
+    y_middle = np.mean(y_limits)
+    z_range = abs(z_limits[1] - z_limits[0])
+    z_middle = np.mean(z_limits)
+
+    # The plot bounding box is a sphere in the sense of the infinity
+    # norm, hence I call half the max range the plot radius.
+    plot_radius = 0.5*max([x_range, y_range, z_range])
+
+    ax.set_xlim3d([x_middle - plot_radius, x_middle + plot_radius])
+    ax.set_ylim3d([y_middle - plot_radius, y_middle + plot_radius])
+    ax.set_zlim3d([z_middle - plot_radius, z_middle + plot_radius])
 
 def cuboid_data(center, size):
     # suppose axis direction: x: to left; y: to inside; z: to upper
@@ -174,8 +67,16 @@ def get_corners(x,y,z):
     y_corners = y[np.r_[0:4,5:9]]
     z_corners = z[np.r_[0:4,5:9]]
     corners_3d = np.vstack([x_corners,y_corners,z_corners]).T
-    return corners_3d
+    return torch.tensor(corners_3d)
 
+def cuboid_faces(k):
+    bottom = [[0,1,2], [0,2,3]]
+    upper = [[4,5,6], [4,6,7]]
+    front = [[0,1,5], [0,5,4]]
+    back = [[3,2,6], [3,6,7]]
+    left = [[0,4,7], [0,7,3]]
+    right = [[1,2,6], [1,6,5]]
+    return torch.tensor(bottom + upper + front + back + left + right).cuda() + 8 * k 
 
 def plot_gmm(ax, mix, mu, cov, color=None, cmap='Spectral', azim=60, elev=0, numWires=5, wireframe=True):
     if color is None:
@@ -212,6 +113,7 @@ def plot_gmm(ax, mix, mu, cov, color=None, cmap='Spectral', azim=60, elev=0, num
             ax.plot_surface(x, y, z, rstride=1, cstride=1, color=color[k], alpha=alpha[k])#
 
 def plot_box(points_group):#
+    # points_group = points_group.numpy()
     fig = plt.figure(figsize=(20, 20))
     ax = fig.add_subplot(111, projection='3d')
 
@@ -264,16 +166,14 @@ def plot_box(points_group):#
     ax.set_ylim(mid_y - max_range, mid_y + max_range)
     ax.set_zlim(mid_z - max_range, mid_z + max_range)
     #plt.axis('scaled')
+    set_axes_equal(ax)
     plt.show()
 
 def non_max_suppression_3d(gms, nms_th):
-    # x:[p, z, w, h, d]
     matplotlib.use( 'tkagg' )
     pi, mu, cov, SVD = gms
     s = SVD['s']
     V = SVD['V']
-
-    #x = [pi]
     box = []
     for k in range(pi.shape[0]):
         #print("before flatten: ", s)
@@ -283,74 +183,93 @@ def non_max_suppression_3d(gms, nms_th):
         #print("after flatten: ", s)
         X, Y, Z = cuboid_data([0,0,0], [1,1,1])
         XYZ = np.stack([X.flatten(), Y.flatten(), Z.flatten()])
-        x, y, z = V[k].T @ (1*np.sqrt(5.99*s[k])[:, None] * XYZ) + mu[k][:, None]
+        x, y, z = V[k].T @ (1.2*np.sqrt(5.99*s[k])[:, None] * XYZ) + mu[k][:, None]
         box.append(get_corners(x,y,z))
-    box = np.asarray(box)
-    #print(box)
-    # x = np.asarray([pi, mu[:, 0], mu[:, 1], mu[:, 2], box[:, 0], box[:, 1], box[:, 2]]).T
-    x = box
-    #print(mu[:, 2])
+    box = torch.stack(box) # k x 8 x 3
 
-    if len(x) == 0:
-        return x
+    if len(box) == 0:
+        return box
 
-    # sorted_gm = np.argsort(-x[:, 0])
     sorted_gm = np.argsort(-pi)
-    x = x[sorted_gm]
+    box = box[sorted_gm].cuda()
+    # x = x[sorted_gm]
     bboxes = [0]
     sorted_corners = [None for i in range(sorted_gm.shape[0])]
-    for i in np.arange(1, len(x)):
-        # bbox = x[i]
 
-        # if sorted_corners[i] is None:
-        #     corners_3d_ground = get_3d_box(bbox[-3:], 0, bbox[1:4])
-        #     sorted_corners[i] = corners_3d_ground
-        # else: corners_3d_ground = sorted_corners[i]
-        corners_3d_ground = x[i]
-        # print("candidate: ", bbox[4:])
+    # Normalize all vertices to [0,1]
+    box_temp = box.view(-1, 3)
+    min, _ = torch.min(box_temp, dim=0)
+    box = (box - min)
+    box_temp = box.view(-1, 3)
+    max = torch.max(box_temp)
+    box = box / max
+
+    print("Generating voxels...")
+    origin = torch.zeros((1, 3)).cuda()
+    scale = torch.ones((1)).cuda()
+    vox_list = mesh2voxel(box, cuboid_faces(0), 30, origin, scale)
+    vox_list = kal.ops.voxelgrid.fill(vox_list.cpu()).cuda()
+    print("Voxels generated!")
+
+    # logs_path = './usd/'
+    # timelapse = kal.visualize.Timelapse(logs_path)
+    # timelapse.add_voxelgrid_batch(
+    #     iteration=0,
+    #     category='debug_all_voxel',
+    #     voxelgrid_list=all_vox # K x N x N x N
+    # )
+
+    for i in np.arange(1, len(vox_list)):
+        vox_gt = vox_list[i]
         flag = 1
+        # print("Testing instance" + str(i))
         for j in range(len(bboxes)):
-            # print("compare: ", i, bboxes[j])
-            # if sorted_corners[bboxes[j]] is None:
-            #     corners_3d_predict = get_3d_box(x[bboxes[j]][-3:], 0, x[bboxes[j]][1:4])
-            #     sorted_corners[bboxes[j]] = corners_3d_predict
-            # else: corners_3d_predict = sorted_corners[bboxes[j]]
-            corners_3d_predict = x[bboxes[j]]
-            #print("corners_3d_predict.z_mean()", corners_3d_predict[:, 1].mean())
-            #print("corners_3d_ground.z_mean()", corners_3d_ground[:, 1].mean())
-            (IOU_3d,IOU_2d) = box3d_iou(corners_3d_predict,corners_3d_ground)
-            # print("IOU_3d = ",IOU_3d)
-            #plot_box([corners_3d_ground, corners_3d_predict])
+
+            vox_pred = vox_list[bboxes[j]]
+            vox_union = torch.logical_or(vox_gt, vox_pred)
+
+            vox_intersection = torch.logical_and(vox_gt, vox_pred)
+            area_inter = torch.sum(vox_intersection)
+            area_union = torch.sum(vox_union)
+            IOU_3d = area_inter / area_union
+            # print("Testing instance" + str(i) + ", IOU_3d = "+ str(IOU_3d))
+
+            # logs_path = './usd/'
+            # timelapse = kal.visualize.Timelapse(logs_path)
+            # timelapse.add_voxelgrid_batch(
+            #     iteration=0,
+            #     category='debug_voxel_union',
+            #     voxelgrid_list=[vox_union.squeeze()] # K x N x N x N
+            # )
+
+            # timelapse.add_voxelgrid_batch(
+            #     iteration=0,
+            #     category='debug_voxel_gt',
+            #     voxelgrid_list=[vox_gt.squeeze()] # K x N x N x N
+            # )
+
+            # timelapse.add_voxelgrid_batch(
+            #     iteration=0,
+            #     category='debug_voxel_pred',
+            #     voxelgrid_list=[vox_pred.squeeze()] # K x N x N x N
+            # )
+            # plot_box([box[bboxes[j]].cpu().numpy(), box[i].cpu().numpy()])
 
             if IOU_3d > nms_th:
-                # print("dropped")
-                # print("bboxes: ", bboxes)
                 flag = -1
                 break
         if flag == 1:
-            # print("add to queue")
             bboxes.append(i)
-            # print("bboxes: ", bboxes)
 
     sorted_bboxes = np.asarray(bboxes, np.int32)
-    sorted_corners = np.asarray(sorted_corners)
-    #print([sorted_corners[bboxes][i, :, 1].mean() for i in range(sorted_corners[bboxes].shape[0])])
-    plot_box(x[sorted_bboxes])
+    print("######final bboxe######: ", sorted_bboxes.shape[0])
+    plot_box(box[sorted_bboxes].cpu().numpy())
     true_bboxes = sorted_gm[sorted_bboxes]
     SVD['U'] = SVD['U'][true_bboxes]
     SVD['s'] = SVD['s'][true_bboxes]
     SVD['V'] = SVD['V'][true_bboxes]
 
-    # print("######final bboxe######: ", true_bboxes)
     return pi[true_bboxes], mu[true_bboxes], cov[true_bboxes]
 
 # 3D-IoU-Python: https://github.com/AlienCat-K/3D-IoU-Python.git
-if __name__=='__main__':
-    print('------------------')
-    # get_3d_box(box_size, heading_angle, center)
-    corners_3d_ground  = get_3d_box((1.497255,1.644981, 3.628938), -1.531692, (2.882992 ,1.698800 ,20.785644)) 
-    plot_box(corners_3d_ground)
-    corners_3d_predict = get_3d_box((1.458242, 1.604773, 3.707947), -1.549553, (2.756923, 1.661275, 20.943280 ))
-    (IOU_3d,IOU_2d)=box3d_iou(corners_3d_predict,corners_3d_ground)
-    print (IOU_3d,IOU_2d) #3d IoU/ 2d IoU of BEV(bird eye's view)
       

@@ -10,10 +10,11 @@ import os, sys
 # from fitters.adaptors import *
 from models.primitives import Plane
 from matplotlib import pyplot as plt
-import matplotlib
+from show.view_utils import set_axes_equal
 from mpl_toolkits.mplot3d import Axes3D
-import tensorflow as tf
+import matplotlib
 import torch
+import tensorflow as tf
 import numpy as np
 
 # ''' Fitters should have no knowledge of ground truth labels,
@@ -66,9 +67,9 @@ class PlaneFitter:
     def fill_gt_placeholders(feed_dict, parameters_gt, batch):
         feed_dict[parameters_gt['plane_n']] = batch['plane_n_gt']
 
-    def compute_parameters(feed_dict, parameters, plot=False):
+    def compute_parameters(feed_dict, parameters, ax, plot=False):
         matplotlib.use( 'tkagg' )
-        P = feed_dict['P'].cpu().numpy()  # BxNx3
+        P = feed_dict['P'].squeeze(0).cpu().numpy()  # BxNx3
         W = feed_dict['W']  # BxNxK
         gmm = feed_dict['GMM']
         s = feed_dict['SVD']['s']
@@ -81,22 +82,19 @@ class PlaneFitter:
         parameters['plane_n'] = n       # BxKx3
         parameters['plane_c'] = c       # BxK
 
-        fig = plt.figure(figsize=(20, 20))
-        ax1 = fig.add_subplot(121, projection='3d')
-        ax1.view_init(azim=60, elev=0)
-        ax2 = fig.add_subplot(122, projection='3d')
-        ax2.view_init(azim=60, elev=0)
+        # fig = plt.figure(figsize=(20, 20))
+        # ax = fig.add_subplot(111, projection='3d')
+        # ax.view_init(azim=60, elev=0)
         alpha = gmm.weights_ / gmm.weights_.max()
-
         planes = []
         for k in range(s.shape[0]):
-            X, Y, Z = surface_data([0,0,0], [1,1,0])
-            XYZ = np.stack([X.flatten(), Y.flatten(), Z.flatten()])
-            x, y, z = V[k].T @ (1.2*np.sqrt(5.99*s[k])[:, None] * XYZ) + gmm.means_[k][:, None]
-            x = x.reshape(2,2)
-            y = y.reshape(2,2)
-            z = z.reshape(2,2)
-            ax1.plot_surface(x,y,z, rstride=1, cstride=1, alpha=alpha[k])
+            # X, Y, Z = surface_data([0,0,0], [1,1,0])
+            # XYZ = np.stack([X.flatten(), Y.flatten(), Z.flatten()])
+            # x, y, z = V[k].T @ (1.2*np.sqrt(5.99*s[k])[:, None] * XYZ) + gmm.means_[k][:, None]
+            # x = x.reshape(2,2)
+            # y = y.reshape(2,2)
+            # z = z.reshape(2,2)
+            # ax1.plot_surface(x,y,z, rstride=1, cstride=1, alpha=alpha[k])
 
             x_len = axis_range[k,0]/2
             y_len = axis_range[k,1]/2
@@ -105,11 +103,12 @@ class PlaneFitter:
                             x_range=[-x_len, x_len], 
                             y_range=[-y_len, y_len])
             planes.append(plane_k)
-
             if plot:
-                plane_k.plot(alpha[k], ax2)
-
-        plt.show()
+                plane_k.plot(alpha[k], ax)
+                
+        # if plot:
+        #     set_axes_equal(ax)
+        #     plt.show()
         parameters['planes'] = planes     
 
     def compute_residue_loss(parameters, P_gt, matching_indices):
