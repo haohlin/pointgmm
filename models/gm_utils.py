@@ -160,8 +160,6 @@ def gm_sample(gms:tuple, num_samples:int) -> tuple:
 def get_hgmm_params(gms: tuple or list, flatten_sigma=False):
     batch_size = gms[-1][0].shape[0]
     device = gms[-1][0].device
-    samples = []
-    splits = []
 
     def bottom_pi():
         if gms[0] is None:
@@ -288,6 +286,7 @@ def hierarchical_gm_sample(gms: tuple or list, num_samples: int, flatten_sigma=F
         splits.append(splits_)
 
     return torch.cat(samples, 0), torch.cat(splits, 0), phi, mu, sigma
+    # return phi, mu, sigma
 
 
 def eigen_penalty_loss(gms: list, eigen_penalty: float) -> T:

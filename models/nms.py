@@ -169,7 +169,7 @@ def plot_box(points_group):#
     set_axes_equal(ax)
     plt.show()
 
-def non_max_suppression_3d(gms, nms_th):
+def non_max_suppression_3d(gms, nms_th=0.25, conf_th=0.001):
     matplotlib.use( 'tkagg' )
     pi, mu, cov, SVD = gms
     s = SVD['s']
@@ -178,11 +178,12 @@ def non_max_suppression_3d(gms, nms_th):
     for k in range(pi.shape[0]):
         #print("before flatten: ", s)
         min_pc = np.argmin(s[k])
-        if s[k, min_pc] < 0.01:
-            s[k, min_pc] = 0.01
+        if s[k, min_pc] < 0.005:
+            s[k, min_pc] = 0.005
         #print("after flatten: ", s)
         X, Y, Z = cuboid_data([0,0,0], [1,1,1])
         XYZ = np.stack([X.flatten(), Y.flatten(), Z.flatten()])
+        # x, y, z = V[k].T @ (np.sqrt(5.99*s[k])[:, None] * XYZ) + mu[k][:, None]
         x, y, z = V[k].T @ (1.2*np.sqrt(5.99*s[k])[:, None] * XYZ) + mu[k][:, None]
         box.append(get_corners(x,y,z))
     box = torch.stack(box) # k x 8 x 3
@@ -192,9 +193,8 @@ def non_max_suppression_3d(gms, nms_th):
 
     sorted_gm = np.argsort(-pi)
     box = box[sorted_gm].cuda()
-    # x = x[sorted_gm]
+    pi_sorted = pi[sorted_gm]
     bboxes = [0]
-    sorted_corners = [None for i in range(sorted_gm.shape[0])]
 
     # Normalize all vertices to [0,1]
     box_temp = box.view(-1, 3)
@@ -234,8 +234,8 @@ def non_max_suppression_3d(gms, nms_th):
             IOU_3d = area_inter / area_union
             # print("Testing instance" + str(i) + ", IOU_3d = "+ str(IOU_3d))
 
-            # logs_path = './usd/'
-            # timelapse = kal.visualize.Timelapse(logs_path)
+            logs_path = './usd/'
+            timelapse = kal.visualize.Timelapse(logs_path)
             # timelapse.add_voxelgrid_batch(
             #     iteration=0,
             #     category='debug_voxel_union',
@@ -255,21 +255,21 @@ def non_max_suppression_3d(gms, nms_th):
             # )
             # plot_box([box[bboxes[j]].cpu().numpy(), box[i].cpu().numpy()])
 
-            if IOU_3d > nms_th:
+            if IOU_3d > nms_th or pi_sorted[bboxes[j]] < conf_th:
                 flag = -1
                 break
         if flag == 1:
             bboxes.append(i)
 
     sorted_bboxes = np.asarray(bboxes, np.int32)
-    print("######final bboxe######: ", sorted_bboxes.shape[0])
-    plot_box(box[sorted_bboxes].cpu().numpy())
+    # print("######final bboxe######: ", sorted_bboxes.shape[0])
+    # plot_box(box[sorted_bboxes].cpu().numpy())
     true_bboxes = sorted_gm[sorted_bboxes]
     SVD['U'] = SVD['U'][true_bboxes]
     SVD['s'] = SVD['s'][true_bboxes]
     SVD['V'] = SVD['V'][true_bboxes]
 
-    return pi[true_bboxes], mu[true_bboxes], cov[true_bboxes]
+    return pi[true_bboxes], mu[true_bboxes], cov[true_bboxes], SVD
 
 # 3D-IoU-Python: https://github.com/AlienCat-K/3D-IoU-Python.git
       

@@ -80,9 +80,9 @@ class MeshDataset(Dataset):
         points = mesh_utils.sample_on_mesh(mesh, face_areas, self.opt.partial_samples[0])
         if self.recon or len(self.transforms) > 0:
             pc_trans, transforms = self.get_transformed_pc(idx, data, points)
-            return [points] + [pc.astype(np.float32) for pc in pc_trans] + [tr.astype(np.float32) for tr in transforms]
+            return [points] + [pc.astype(np.float32) for pc in pc_trans] + [tr.astype(np.float32) for tr in transforms], data.mesh()
         else:
-            return points
+            return points, data.mesh()
 
     def __len__(self):
         return len(self.data_paths)

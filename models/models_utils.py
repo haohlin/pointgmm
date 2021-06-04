@@ -112,3 +112,16 @@ def recursive_to(item, device):
         return [recursive_to(item[i]) for i in range(len(item))]
     return item
 
+def l2_norm(arr, axis=0):
+    """
+    arr: ndarray, BxNx3
+    axis: 0 for row-wise, 1 for column wise
+    """
+    norm = np.expand_dims(np.linalg.norm(arr, axis=axis), axis=axis) 
+    return arr / norm
+
+def cross_norm(v1, v2):
+    """
+    Calculate vector lenth of the cross product of v1, v2
+    """
+    return np.linalg.norm(np.cross(v1, v2))

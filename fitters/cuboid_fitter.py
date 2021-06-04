@@ -8,7 +8,7 @@ import os, sys
 # from utils.geometry_utils import weighted_plane_fitting
 # from utils.tf_numerical_safe import acos_safe
 # from fitters.adaptors import *
-from models.primitives import Plane
+from models.primitives import *
 from matplotlib import pyplot as plt
 from show.view_utils import set_axes_equal
 from mpl_toolkits.mplot3d import Axes3D
@@ -41,9 +41,9 @@ def surface_data(center, size):
          [o[2], o[2]]]                        # z coordinate of points in bottom surface
     return np.array(x), np.array(y), np.array(z)
 
-class PlaneFitter:
+class CuboidFitter:
     def primitive_name():
-        return 'plane'
+        return 'cuboid'
         
     def weighted_plane_fitting(P, W):
         # P - BxNx3
@@ -81,7 +81,7 @@ class PlaneFitter:
     #         merged_range[1] = 
     #     return equal_axis, merged_range
 
-    def same_plane(p1:Plane, p2:Plane):
+    def same_cuboid(p1:Cuboid, p2:Cuboid):
         dist_thresh = 0.3#0.2
         ang_thresh = 0.15#0.258
         
@@ -89,16 +89,24 @@ class PlaneFitter:
         center_dist = np.linalg.norm(center_vector)
         center_vector = l2_norm(center_vector)
         
-        if np.dot(p1.n, p2.n) < 0:
-            mean_norm = l2_norm(p1.n - p2.n)
-        else: 
-            mean_norm = l2_norm(p1.n + p2.n)
+        # if np.dot(p1.n, p2.n) < 0:
+        #     mean_norm = l2_norm(p1.n - p2.n)
+        # else: 
+        #     mean_norm = l2_norm(p1.n + p2.n)
 
         merged_range = np.zeros(2)
+
+        # TODO: aline three axis and compare edge length
+        # 1. Get center vector;
+        # 2. Find the axis (in each cuboid) that aligns with the center vector;
+        # 3. Align the rest two axis based on axis size
+        # 4. If center distance, size and orientation of the two edges are within threshold:
+        # 5. Merge.
+
         equal_x = cross_norm(p1.x_axis, p2.x_axis) < ang_thresh \
                     and cross_norm(p1.x_axis, center_vector) < ang_thresh \
                     and cross_norm(p2.x_axis, center_vector) < ang_thresh \
-                    and (center_dist - (p1.x_range[0] + p2.x_range[0])) / center_dist < dist_thresh # Boundaries of two planes are close
+                    and (center_dist - (p1.x_range[0] + p2.x_range[0])) / center_dist < dist_thresh # Boundaries of two cuboids are close
         equal_y = cross_norm(p1.y_axis, p2.y_axis) < ang_thresh \
                     and cross_norm(p1.y_axis, center_vector) < ang_thresh \
                     and cross_norm(p2.y_axis, center_vector) < ang_thresh \
@@ -127,10 +135,10 @@ class PlaneFitter:
             
         equal_norm = cross_norm(p1.n, p2.n) < ang_thresh # angle of two normals < 15 degrees
         axis_same_plame = (equal_x or equal_y or equal_xy or equal_yx) and equal_norm
-        centers_same_plane = abs(np.dot(center_vector, mean_norm)) < ang_thresh # centers on the same plane < 15 degrees
+        centers_same_cuboid = abs(np.dot(center_vector, mean_norm)) < ang_thresh # centers on the same cuboid < 15 degrees
         
         # merge p1 and p2
-        if axis_same_plame and centers_same_plane:
+        if axis_same_plame and centers_same_cuboid:
             center = (p1.center + p2.center) / 2
             n = mean_norm
             x_axis = center_vector
@@ -139,7 +147,7 @@ class PlaneFitter:
             y_range = [merged_range[1], merged_range[1]]
             obj_conf = (p1.obj_conf + p2.obj_conf) / 2
 
-            plane = Plane(n=n, center=center, #, c[k], 
+            cuboid = Cuboid(n=n, center=center, #, c[k], 
                             x_axis=x_axis, y_axis=y_axis, 
                             x_range=x_range, y_range=y_range,
                             obj_conf=obj_conf)
@@ -154,58 +162,58 @@ class PlaneFitter:
 
             # ax = fig.add_subplot(122, projection='3d')
             # ax.view_init(azim=60, elev=0)
-            # plane.plot(ax)
+            # cuboid.plot(ax)
 
             # set_axes_equal(ax)
             # plt.show()
 
-            # plane = Plane()
-            # plane.center = (p1.center + p2.center) / 2
-            # plane.n = l2_norm(p1.n + p2.n)
-            # plane.x_axis = center_vector
-            # plane.y_axis = l2_norm(np.cross(plane.n, plane.x_axis))
-            # plane.x_range = [merged_range[0], merged_range[0]]
-            # plane.y_range = [merged_range[1], merged_range[1]]
-            return 1, plane
+            # cuboid = Cuboid()
+            # cuboid.center = (p1.center + p2.center) / 2
+            # cuboid.n = l2_norm(p1.n + p2.n)
+            # cuboid.x_axis = center_vector
+            # cuboid.y_axis = l2_norm(np.cross(cuboid.n, cuboid.x_axis))
+            # cuboid.x_range = [merged_range[0], merged_range[0]]
+            # cuboid.y_range = [merged_range[1], merged_range[1]]
+            return 1, cuboid
         else:
             return 0, None
 
-    def merge(p1:Plane, p2:Plane):
+    def merge(p1:Cuboid, p2:Cuboid):
         # TODO: merge p1 and p2
-        plane = Plane()
-        plane.center = (p1.center + p2.center) / 2
-        plane.n = l2_norm(p1.n + p2.n)
-        # plane.x_axis = 
-        # plane.y_axis = 
+        cuboid = Cuboid()
+        cuboid.center = (p1.center + p2.center) / 2
+        cuboid.n = l2_norm(p1.n + p2.n)
+        # cuboid.x_axis = 
+        # cuboid.y_axis = 
         pass
 
-    def merge_planes(plane_list, ax, plot=False):
-        # plane_list = parameters['planes']
-        planes_cur = [plane_list[0]] 
+    def merge_cuboids(cuboid_list, ax, plot=False):
+        # cuboid_list = parameters['cuboids']
+        cuboids_cur = [cuboid_list[0]] 
 
-        for k in np.arange(1, len(plane_list)):
-            ground_truth = plane_list[k]
+        for k in np.arange(1, len(cuboid_list)):
+            ground_truth = cuboid_list[k]
             flag = 1
             # print("Testing instance" + str(i))
-            for j in range(len(planes_cur)):
+            for j in range(len(cuboids_cur)):
                 # TODO: find best merging option, then merge
-                predicted = planes_cur[j]
-                is_same_plane, merged_plane = PlaneFitter.same_plane(predicted, ground_truth) 
+                predicted = cuboids_cur[j]
+                is_same_cuboid, merged_cuboid = CuboidFitter.same_cuboid(predicted, ground_truth) 
                 
-                if is_same_plane: # if can be merged
-                    flag = -1 # merge and add to current plane list
+                if is_same_cuboid: # if can be merged
+                    flag = -1 # merge and add to current cuboid list
                     # merged = merge(predicted, ground_truth)
-                    planes_cur[j] = merged_plane
+                    cuboids_cur[j] = merged_cuboid
                     break
             if flag == 1:
-                planes_cur.append(ground_truth) # if not mergeable with any current planes, add to current plane list
+                cuboids_cur.append(ground_truth) # if not mergeable with any current cuboids, add to current cuboid list
 
-        for k in range(len(planes_cur)):
+        for k in range(len(cuboids_cur)):
             if plot:
-                planes_cur[k].plot(ax)
-        print("Planes after merging", len(planes_cur))
-        # parameters['planes'] = planes_cur
-        return planes_cur
+                cuboids_cur[k].plot(ax)
+        print("Cuboids after merging", len(cuboids_cur))
+        # parameters['cuboids'] = cuboids_cur
+        return cuboids_cur
 
 
     def compute_parameters(feed_dict, parameters, ax, n_instances, plot=False):
@@ -217,21 +225,10 @@ class PlaneFitter:
         V = feed_dict['SVD']['V']
         # normalize V
         V = l2_norm(V, axis=2)
-        axis_range = 1.2*np.sqrt(5.99*s)
-
-        # calculate the correct normal of x/y plane
-        n = np.cross(V[:, 0, :], V[:, 1, :]) # K
-        n = l2_norm(n, axis=1)
-        # n = l2_norm(V[:, :, 2], axis=1)
-        # n = V[:, :, -1]
-        # P_mean = np.mean(P, axis=0, keepdims=True)     # Bx3
-        # c_ = n * P_mean
-        # c = np.sum(c_, axis=1)          
-        # parameters['plane_n'] = n       # BxKx3
-        # parameters['plane_c'] = c       # BxK
+        axis_range = np.sqrt(5.99*s)
 
         alpha = gmm.weights_ / gmm.weights_.max()
-        planes = []
+        boxs = []
         for k in range(n_instances):
             if not gmm.weights_[k]: # if no points in instance k
                 continue
@@ -244,22 +241,37 @@ class PlaneFitter:
             # y_len_1 = np.max(dist_y)
             # y_len_2 = abs(np.min(dist_y))
 
-            plane_k = Plane(n=n[k], center=gmm.means_[k], #, c[k], 
-                            x_axis=V[k,0,:], y_axis=V[k,1,:], 
+            box_model = Cuboid(center=gmm.means_[k], 
+                            x_axis=V[k,0,:], y_axis=V[k,1,:], z_axis=V[k,2,:], 
                             x_range=[axis_range[k,0]/2, axis_range[k,0]/2], 
                             y_range=[axis_range[k,1]/2, axis_range[k,1]/2], 
+                            z_range=[axis_range[k,2]/2, axis_range[k,2]/2], 
                             obj_conf=alpha[k])
-            planes.append(plane_k)
+
+            box_k = {
+                'type': 'cuboid',
+                'center': box_model.center,
+                'x_range': box_model.x_range,
+                'y_range': box_model.y_range,
+                'z_range': box_model.z_range,
+                'x_axis': box_model.x_axis,
+                'y_axis': box_model.y_axis,
+                'z_axis': box_model.z_axis,
+                'obj_conf': box_model.obj_conf
+            }
+
+            boxs.append(box_k)
             if plot:
                 # matplotlib.use( 'tkagg' )
                 # fig = plt.figure(figsize=(20, 20))
                 # ax = fig.add_subplot(111, projection='3d')
                 # ax.view_init(azim=60, elev=0)
-                plane_k.plot(ax)
+                box_model.plot(ax)
                 # set_axes_equal(ax)
                 # plt.show()
                 
-        parameters['planes'] = planes     
+        parameters['boxs'] = boxs   
+        return boxs
 
     def compute_residue_loss(parameters, P_gt, matching_indices):
         return PlaneFitter.compute_residue_single(

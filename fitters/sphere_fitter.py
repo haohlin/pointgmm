@@ -13,6 +13,7 @@ import os, sys
 from matplotlib import pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from show.view_utils import set_axes_equal
+from models.models_utils import *
 import tensorflow as tf
 import numpy as np
 import matplotlib

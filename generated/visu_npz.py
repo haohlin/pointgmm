@@ -163,13 +163,15 @@ def plot_gmm(ax, mix, mu, cov, color=None, cmap='Spectral', azim=60, elev=0, num
     if not plot_box:
         u = np.linspace(0.0, 2.0 * np.pi, numWires)
         v = np.linspace(0.0, np.pi, numWires)
-        # X = np.outer(np.cos(u), np.sin(v))
-        # Y = np.outer(np.sin(u), np.sin(v))
-        # Z = np.outer(np.ones_like(u), np.cos(v)) 
+        X = np.outer(np.cos(u), np.sin(v))
+        Y = np.outer(np.sin(u), np.sin(v))
+        Z = np.outer(np.ones_like(u), np.cos(v)) 
 
-        X = sphere_mesh.vertices[:, 0]
-        Y = sphere_mesh.vertices[:, 1]
-        Z = sphere_mesh.vertices[:, 2]
+        # HALTED TODO: visualize ellipsoids in Kaolin
+        # X = sphere_mesh.vertices[:, 0]
+        # Y = sphere_mesh.vertices[:, 1]
+        # Z = sphere_mesh.vertices[:, 2]
+
         XYZ = np.stack([X.flatten(), Y.flatten(), Z.flatten()])
         numWires_x = numWires
     alpha = mix / mix.max()
@@ -178,7 +180,10 @@ def plot_gmm(ax, mix, mu, cov, color=None, cmap='Spectral', azim=60, elev=0, num
     faces = []
     voxels = []
     for k in range(mix.shape[0]):
-        #print(mix[k])
+        # skip if no points in instance k
+        if not mix[k]: 
+            continue
+        
         # find the rotation matrix and radii of the axes
         U, s, V = np.linalg.svd(cov[k])
         if plot_box:
@@ -186,11 +191,18 @@ def plot_gmm(ax, mix, mu, cov, color=None, cmap='Spectral', azim=60, elev=0, num
             XYZ = np.stack([X.flatten(), Y.flatten(), Z.flatten()])
             numWires_x = 4
             numWires = 5
-        xyz_stretch = np.sqrt(5.99*s)[:, None] * XYZ # 1.2*np.sqrt(5.99*s)[:, None] * XYZ
+            xyz_stretch = 1.2*np.sqrt(5.99*s)[:, None] * XYZ
+        else:
+            # xyz_stretch = 1.2*np.sqrt(5.99*s)[:, None] * XYZ
+            xyz_stretch = np.sqrt(1.5*s)[:, None] * XYZ
         xyz = V.T @ (xyz_stretch) + mu[k][:, None]#V.T
         x, y, z = xyz
         if plot_box:
             corners = get_corners(x, y, z)
+            """
+            HALTED TODO:Calculate corners based on the furtherst point along x, y axis
+            """
+            
             box_faces = cuboid_faces(k)
             vertices.append(corners)
             faces.append(box_faces)
@@ -203,6 +215,7 @@ def plot_gmm(ax, mix, mu, cov, color=None, cmap='Spectral', azim=60, elev=0, num
         y = y.reshape(numWires_x, numWires)
         z = z.reshape(numWires_x, numWires)
 
+        # ax.quiver(mu[k,0], mu[k,1], mu[k,2], V[:,0], V[:,1], V[:,2], color="r", length=0.5, normalize=True)
         if wireframe:
             # ax.scatter(X.flatten(), Y.flatten(), Z.flatten())
             ax.plot_wireframe(x, y, z, rstride=1, cstride=1, color=color[k], alpha=alpha[k])
@@ -228,12 +241,12 @@ def plot_gmm(ax, mix, mu, cov, color=None, cmap='Spectral', azim=60, elev=0, num
     else:
         vertices = torch.cat(vertices, dim=0) # k x n_verts x 3 -> 8k x 3
         faces = torch.cat(faces, dim=0) # k x 12 x 3 -> 12k x 3
-        timelapse.add_mesh_batch(
-            iteration=0,
-            category='hgmm_airplane',
-            vertices_list=[vertices],
-            faces_list=[faces]
-        )    
+        # timelapse.add_mesh_batch(
+        #     iteration=0,
+        #     category='hgmm_airplane_L3',
+        #     vertices_list=[vertices],
+        #     faces_list=[faces]
+        # )    
 
 def plot_pcd(ax, pcd, color=None, cmap='Spectral', size=4, alpha=0.9, azim=60, elev=0):
     if color is None:
@@ -258,9 +271,9 @@ def parse_args():
     parse input arguments
     """
     parser = argparse.ArgumentParser(description='HGMM and segmentation visualization')
-    #parser.add_argument('--input', type=str, default='generated/chair_vae/eval_points/hgmms/hgmms_000_00.npz')
-    parser.add_argument('--obj_class', type=str, default='table')
-    parser.add_argument('--id', type=str, default='006_00')
+    parser.add_argument('--input', type=str, default=None)
+    parser.add_argument('--obj_class', type=str, default='chair')
+    parser.add_argument('--id', type=str, default='000_03')
     parser.add_argument('--save_ply', action='store_true')
     #parser.add_argument('--num_pts', help='number of input points', default=50000, type=int)
     parser.add_argument('--output_dir', type=str, default='generated/ply/')
@@ -276,14 +289,16 @@ if __name__ == "__main__":
     print(args)
     
     # import data
-    npz_data = np.load("generated/" + args.obj_class + "_vae/eval_points/hgmms/hgmms_" + args.id + ".npz")
+    if args.input:
+        npz_data = np.load(args.input)
+    else:
+        npz_data = np.load("generated/" + args.obj_class + "_vae/eval_points/hgmms/hgmms_" + args.id + ".npz")
     input_pts = npz_data['input_points']
-    sample_pts = npz_data['sample_points']
-    splits = npz_data['splits']
     pts_seg = npz_data['pts_seg']
-    pi = npz_data['pi']
-    mu = npz_data['mu']
-    sigma = npz_data['sigma']
+    pi = npz_data['pi'][155:780]
+    print(sum(pi))
+    mu = npz_data['mu'][155:780]
+    sigma = npz_data['sigma'][155:780]
     print("number of clusters: ", pi.shape[0])
 
     color_palette = create_color_palette()
@@ -291,30 +306,35 @@ if __name__ == "__main__":
     newcmp = ListedColormap(newcolors)
 
     #colors = np.zeros((sample_pts.shape[0],3))
-    sample_color = np.zeros(sample_pts.shape[0])
-    vert_sample_colors = np.zeros((sample_pts.shape[0], 3))
-    for i in range(splits.shape[0]-1):
-        start = splits[i]
-        end = splits[i+1]
-        sample_color[start:end] = float(i)/float(splits.shape[0]-1)
-        vert_sample_colors[start:end] = color_palette[i % 45]
+    # sample_color = np.zeros(sample_pts.shape[0])
+    # vert_sample_colors = np.zeros((sample_pts.shape[0], 3))
+    # for i in range(splits.shape[0]-1):
+    #     start = splits[i]
+    #     end = splits[i+1]
+    #     sample_color[start:end] = float(i)/float(splits.shape[0]-1)
+    #     vert_sample_colors[start:end] = color_palette[i % 45]
         #colors[start:end] = npz_data["palette"][i]
     
     fig = plt.figure(figsize=(20, 20))
 
-    ax = fig.add_subplot(121, projection='3d')
     #pts_seg = [np.asarray(create_color_palette()[pts_seg[i]%45])/255 for i in range(pts_seg.shape[0])]
-    seg_color = pts_seg / (splits.shape[0]-1)
+    seg_color = pts_seg / (pi.shape[0]-1)
 
     logs_path = './logs/'
     # npz_airplane = np.load("generated/airplane_vae/eval_points/hgmms/hgmms_" + args.id + ".npz")
     # npz_table = np.load("generated/table_vae/eval_points/hgmms/hgmms_" + args.id + ".npz")
-    # npz_chair = np.load("generated/chair_vae/eval_points/hgmms/hgmms_" + args.id + ".npz")
+    npz_chair = np.load("generated/chair_vae/eval_points/hgmms/hgmms_" + args.id + ".npz")
     # airplane_pts = npz_airplane['input_points']
     # table_pts = npz_table['input_points']
-    # chair_pts = npz_chair['input_points']
+    chair_pts = torch.from_numpy(npz_chair['input_points']) 
 
     timelapse = kal.visualize.Timelapse(logs_path)
+    # voxels = kal.ops.conversions.pointclouds_to_voxelgrids(chair_pts.unsqueeze(0)).squeeze() # N x N x N
+    # timelapse.add_voxelgrid_batch(
+    #     iteration=0,
+    #     category='voxel_chair',
+    #     voxelgrid_list=[voxels] # K x N x N x N
+    # )
     # timelapse.add_pointcloud_batch(
     #     iteration=1,
     #     pointcloud_list=[torch.from_numpy(airplane_pts * 10), 
@@ -335,14 +355,14 @@ if __name__ == "__main__":
     #     faces_list=[mesh.faces]
     # )
 
-    plot_pcd(ax, input_pts, color=seg_color, cmap=newcmp)
-    #plot_gmm(ax, pi, mu, sigma, cmap=newcmp)
-    ax.set_title("point cloud segmentation")
+    # ax = fig.add_subplot(121, projection='3d')
+    # plot_pcd(ax, input_pts, color=seg_color, cmap=newcmp)
+    # # plot_gmm(ax, pi, mu, sigma, cmap=newcmp, wireframe=True, plot_box=True)#, color=npz_data["palette"])
+    # ax.set_title("point cloud segmentation")
 
     ax = fig.add_subplot(122, projection='3d')
-    # plot_pcd(ax, sample_pts, color=sample_color, cmap=newcmp)
-    # plot_pcd(ax, input_pts, color=seg_color, cmap=newcmp)
-    plot_gmm(ax, pi, mu, sigma, cmap=newcmp, wireframe=False)#, color=npz_data["palette"])
+    plot_pcd(ax, input_pts, cmap=newcmp)
+    plot_gmm(ax, pi, mu, sigma, cmap=newcmp, wireframe=True, plot_box=False)#, color=npz_data["palette"])
     ax.set_title("point cloud (with GMM)")
     set_axes_equal(ax)
     plt.tight_layout()
