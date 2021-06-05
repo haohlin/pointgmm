@@ -144,6 +144,9 @@ class Cuboid: # A finite plane patch spanned by x_axis and y_axis
             self.y_axis = y_axis
             self.z_axis = z_axis
 
+    def get_volume(self):
+        return self.x_range[0] * self.y_range[0] * self.z_range[0]
+
     def get_cuboid_vertices(self):
         # suppose axis direction: x: to left; y: to inside; z: to upper
         # get the (left, outside, bottom) point

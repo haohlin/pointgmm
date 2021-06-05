@@ -54,9 +54,9 @@ def log(log_dir, chamfer_list, psnr_list, n_components, iou_list):
     
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
-    filename_chamfer = f'{log_dir}chamfer.txt'
-    filename_psnr = f'{log_dir}psnr.txt'
-    filename_iou = f'{log_dir}iou.txt'
+    filename_chamfer = f'{log_dir}chamfer_merged.txt'
+    filename_psnr = f'{log_dir}psnr_merged.txt'
+    filename_iou = f'{log_dir}iou_merged.txt'
     # filename_psnr_nms = f'{log_dir}psnr_nms.txt'
     # filename_time = f'{log_dir}{chair}_{id:03d}_time.txt'
     f1 = open(filename_chamfer, 'a')
@@ -170,8 +170,8 @@ def parse_args():
     parse input arguments
     """
     parser = argparse.ArgumentParser(description='Chamfer distance / PSNR calculator')
-    parser.add_argument('--input', type=str, default='generated/table_vae/eval_points/hgmms/')
-    parser.add_argument('--obj_class', type=str, default='table')
+    parser.add_argument('--input', type=str, default='generated/chair_vae/eval_points/hgmms/')
+    parser.add_argument('--obj_class', type=str, default='chair')
     parser.add_argument('--id', type=str, default='01')
     parser.add_argument('--output_dir', type=str, default='logs/primitive/')
 
@@ -204,7 +204,8 @@ if __name__ == "__main__":
         pi_nms = npz_data['pi_nms']
         mu_nms = npz_data['mu_nms']
         sigma_nms = npz_data['sigma_nms']
-        cuboid_list = npz_data['cuboid_list']
+        cuboid_list_merged = npz_data['cuboid_list']
+        cuboid_list = npz_data['cuboid_list_merged']
         input_mesh = npz_data['input_mesh'][0]
         input_vertices = input_mesh['vertices'].cuda()
         input_faces = input_mesh['faces'].cuda()
@@ -217,10 +218,12 @@ if __name__ == "__main__":
         chamfer_list = []
         # chamfer_list_nms = []
         # n_components = []
-        n_components_nms = []
+        # n_components_nms = []
+        n_components_merged = []
         iou_list = []
         for i in range(len(pi)):
             box_list = []
+            box_merged_list = []
 
             # matplotlib.use( 'tkagg' )
             # fig = plt.figure(figsize=(20, 20))
@@ -228,15 +231,21 @@ if __name__ == "__main__":
             # ax.view_init(azim=60, elev=0)
             # ax.scatter(input_pts[0, :, 0].cpu(), input_pts[0, :, 1].cpu(), input_pts[0, :, 2].cpu())
             
-            for k, box_k in enumerate(cuboid_list[i]):
-                box_model = Cuboid(center=box_k["center"], 
-                                x_axis=box_k["x_axis"], y_axis=box_k["y_axis"], z_axis=box_k["z_axis"], 
-                                x_range=box_k["x_range"],y_range=box_k["y_range"],z_range=box_k["z_range"], 
-                                obj_conf=box_k["obj_conf"])
-                box_list.append(box_model)
-                # box_model.plot(ax)
+            # for k, (box_k, box_k_merged) in enumerate(zip(cuboid_list[i], cuboid_list_merged[i])):
+            #     box_model = Cuboid(center=box_k["center"], 
+            #                     x_axis=box_k["x_axis"], y_axis=box_k["y_axis"], z_axis=box_k["z_axis"], 
+            #                     x_range=box_k["x_range"],y_range=box_k["y_range"],z_range=box_k["z_range"], 
+            #                     obj_conf=box_k["obj_conf"])
+            #     box_merged_model = Cuboid(center=box_k_merged["center"], 
+            #                     x_axis=box_k_merged["x_axis"], y_axis=box_k_merged["y_axis"], z_axis=box_k_merged["z_axis"], 
+            #                     x_range=box_k_merged["x_range"],y_range=box_k_merged["y_range"],z_range=box_k_merged["z_range"], 
+            #                     obj_conf=box_k_merged["obj_conf"])
+            #     box_list.append(box_model)
+            #     box_merged_list.append(box_merged_model)
+            #     # box_model.plot(ax)
 
-            verts, faces = box_2_mesh(box_list)
+            verts, faces = box_2_mesh(cuboid_list[i])
+            # verts, faces = box_2_mesh(box_list)
             iou = mesh_iou(input_vertices.unsqueeze(0), input_faces, verts.unsqueeze(0), faces)
             iou_list.append(iou)
             pts = kal.ops.mesh.sample_points(verts.unsqueeze(0), faces, input_pts.shape[1])[0].squeeze(0)
@@ -261,12 +270,13 @@ if __name__ == "__main__":
             # psnr_list_nms.append(psnr_nms)
 
             # n_components.append(pi[i].shape[0])
-            n_components_nms.append(pi_nms[i].shape[0])
-            print(f'Level: {i}, IoU: {iou}, chamfer: {chamfer}, psnr: {psnr}, n_components: {pi[i].shape[0]}')
+            # n_components_nms.append(pi_nms[i].shape[0])
+            n_components_merged.append(len(cuboid_list[i]))
+            print(f'Level: {i}, IoU: {iou}, chamfer: {chamfer}, psnr: {psnr}, n_primitives: {len(cuboid_list[i])}')
 
             # set_axes_equal(ax)
             # plt.show()
 
         # write log file
-        log(log_dir, chamfer_list, psnr_list, n_components_nms, iou_list)
+        log(log_dir, chamfer_list, psnr_list, n_components_merged, iou_list)
         # log(log_dir, chamfer_list, chamfer_list_nms, psnr_list, psnr_list_nms, n_components, n_components_nms)

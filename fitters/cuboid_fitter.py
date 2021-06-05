@@ -42,6 +42,10 @@ def surface_data(center, size):
     return np.array(x), np.array(y), np.array(z)
 
 class CuboidFitter:
+
+    dist_thresh = 0.4#0.2
+    ang_thresh = 0.258#0.17
+
     def primitive_name():
         return 'cuboid'
         
@@ -70,32 +74,37 @@ class CuboidFitter:
     def fill_gt_placeholders(feed_dict, parameters_gt, batch):
         feed_dict[parameters_gt['plane_n']] = batch['plane_n_gt']
 
-    # def ax_align(ax1, ax2, range1, range2, center_vector, center_dist):
-    #     equal_axis = cross_norm(ax1, ax2) < 0.258 \
-    #                     and cross_norm(ax1, center_vector) < 0.258 \
-    #                     and cross_norm(ax2, center_vector) < 0.258 \
-    #                     and (center_dist - (range1 + range2)) / center_dist < 0.4
-    #     merged_range = np.zeros(2)
-    #     if equal_axis:
-    #         merged_range[0] = (center_dist + range1 + range2) / 2
-    #         merged_range[1] = 
-    #     return equal_axis, merged_range
+    def align_center_axis(p:Cuboid, center_vector):
+        axis = np.vstack((p.x_axis, p.y_axis, p.z_axis))
+        axis_range = np.vstack((p.x_range[1], p.y_range[1], p.z_range[1]))
+        cross = np.linalg.norm(np.cross(axis, center_vector), axis=1)
+        cross_max_idx = np.argmin(cross)
+        center_axis = axis[cross_max_idx]
+        center_range = axis_range[cross_max_idx]
 
+        mask = np.ones(axis.shape[0], dtype=bool)
+        mask[[cross_max_idx]] = False
+        axis = axis[mask,...]
+        axis_range = axis_range[mask,...]
+
+        # long_axis_idx = np.argmax(axis_range)
+        # short_axis_idx = np.argmin(axis_range)
+        # long_axis = axis[long_axis_idx]
+        # short_axis = axis[short_axis_idx]
+        # long_range = axis_range[long_axis_idx]
+        # short_range = axis_range[short_axis_idx]
+        # out_axis = np.vstack((center_axis, long_axis, short_axis))
+        # out_range = np.vstack((center_range, long_range, short_range))
+        out_axis = np.vstack((center_axis, axis))
+        out_range = np.vstack((center_range, axis_range))
+
+        cross_max = cross[cross_max_idx]
+        if cross_max < CuboidFitter.ang_thresh: 
+            return 1, out_axis, out_range
+        else:
+            return 0, out_axis, out_range
+        
     def same_cuboid(p1:Cuboid, p2:Cuboid):
-        dist_thresh = 0.3#0.2
-        ang_thresh = 0.15#0.258
-        
-        center_vector = p1.center-p2.center
-        center_dist = np.linalg.norm(center_vector)
-        center_vector = l2_norm(center_vector)
-        
-        # if np.dot(p1.n, p2.n) < 0:
-        #     mean_norm = l2_norm(p1.n - p2.n)
-        # else: 
-        #     mean_norm = l2_norm(p1.n + p2.n)
-
-        merged_range = np.zeros(2)
-
         # TODO: aline three axis and compare edge length
         # 1. Get center vector;
         # 2. Find the axis (in each cuboid) that aligns with the center vector;
@@ -103,90 +112,77 @@ class CuboidFitter:
         # 4. If center distance, size and orientation of the two edges are within threshold:
         # 5. Merge.
 
-        equal_x = cross_norm(p1.x_axis, p2.x_axis) < ang_thresh \
-                    and cross_norm(p1.x_axis, center_vector) < ang_thresh \
-                    and cross_norm(p2.x_axis, center_vector) < ang_thresh \
-                    and (center_dist - (p1.x_range[0] + p2.x_range[0])) / center_dist < dist_thresh # Boundaries of two cuboids are close
-        equal_y = cross_norm(p1.y_axis, p2.y_axis) < ang_thresh \
-                    and cross_norm(p1.y_axis, center_vector) < ang_thresh \
-                    and cross_norm(p2.y_axis, center_vector) < ang_thresh \
-                    and (center_dist - (p1.y_range[0] + p2.y_range[0])) / center_dist < dist_thresh
-        equal_xy = cross_norm(p1.x_axis, p2.y_axis) < ang_thresh \
-                    and cross_norm(p1.x_axis, center_vector) < ang_thresh \
-                    and cross_norm(p2.y_axis, center_vector) < ang_thresh \
-                    and (center_dist - (p1.x_range[0] + p2.y_range[0])) / center_dist < dist_thresh
-        equal_yx = cross_norm(p1.x_axis, p2.x_axis) < ang_thresh \
-                    and cross_norm(p1.x_axis, center_vector) < ang_thresh \
-                    and cross_norm(p2.x_axis, center_vector) < ang_thresh \
-                    and (center_dist - (p1.y_range[0] + p2.x_range[0])) / center_dist < dist_thresh
-        if equal_x:
-            merged_range[0] = (center_dist + p1.x_range[0] + p2.x_range[0]) / 2
-            merged_range[1] = (p1.y_range[0] + p2.y_range[0]) / 2
-            # TODO: add new center generation based on edges
-        elif equal_y:
-            merged_range[0] = (center_dist + p1.y_range[0] + p2.y_range[0]) / 2
-            merged_range[1] = (p1.x_range[0] + p2.x_range[0]) / 2
-        elif equal_xy:
-            merged_range[0] = (center_dist + p1.x_range[0] + p2.y_range[0]) / 2
-            merged_range[1] = (p1.y_range[0] + p2.x_range[0]) / 2
-        elif equal_yx:
-            merged_range[0] = (center_dist + p1.y_range[0] + p2.x_range[0]) / 2
-            merged_range[1] = (p1.x_range[0] + p2.y_range[0]) / 2
-            
-        equal_norm = cross_norm(p1.n, p2.n) < ang_thresh # angle of two normals < 15 degrees
-        axis_same_plame = (equal_x or equal_y or equal_xy or equal_yx) and equal_norm
-        centers_same_cuboid = abs(np.dot(center_vector, mean_norm)) < ang_thresh # centers on the same cuboid < 15 degrees
-        
-        # merge p1 and p2
-        if axis_same_plame and centers_same_cuboid:
-            center = (p1.center + p2.center) / 2
-            n = mean_norm
-            x_axis = center_vector
-            y_axis = l2_norm(np.cross(n, x_axis))
-            x_range = [merged_range[0], merged_range[0]]
-            y_range = [merged_range[1], merged_range[1]]
-            obj_conf = (p1.obj_conf + p2.obj_conf) / 2
+        # 1. Get center vector;
+        center_vector = p1.center-p2.center
+        center_dist = np.linalg.norm(center_vector)
+        center_vector = l2_norm(center_vector)
 
-            cuboid = Cuboid(n=n, center=center, #, c[k], 
-                            x_axis=x_axis, y_axis=y_axis, 
-                            x_range=x_range, y_range=y_range,
-                            obj_conf=obj_conf)
-            
-            # TODO: add point cloud plot and compare 
-            # matplotlib.use( 'tkagg' )
-            # fig = plt.figure(figsize=(20, 20))
-            # ax = fig.add_subplot(121, projection='3d')
-            # ax.view_init(azim=60, elev=0)
-            # p1.plot(ax)
-            # p2.plot(ax)
-
-            # ax = fig.add_subplot(122, projection='3d')
-            # ax.view_init(azim=60, elev=0)
-            # cuboid.plot(ax)
-
-            # set_axes_equal(ax)
-            # plt.show()
-
-            # cuboid = Cuboid()
-            # cuboid.center = (p1.center + p2.center) / 2
-            # cuboid.n = l2_norm(p1.n + p2.n)
-            # cuboid.x_axis = center_vector
-            # cuboid.y_axis = l2_norm(np.cross(cuboid.n, cuboid.x_axis))
-            # cuboid.x_range = [merged_range[0], merged_range[0]]
-            # cuboid.y_range = [merged_range[1], merged_range[1]]
-            return 1, cuboid
+        # 2. Find the axis (in each cuboid) that aligns with the center vector;
+        p1_aligned, p1_axis, p1_range = CuboidFitter.align_center_axis(p1, center_vector)
+        p2_aligned, p2_axis, p2_range = CuboidFitter.align_center_axis(p2, center_vector)
+        center_vec_aligned = cross_norm(p1_axis[0], p2_axis[0]) < CuboidFitter.ang_thresh
+        center_aligned = p1_aligned and p2_aligned and center_vec_aligned
+        if center_aligned:
+            pass
         else:
             return 0, None
 
-    def merge(p1:Cuboid, p2:Cuboid):
-        # TODO: merge p1 and p2
-        cuboid = Cuboid()
-        cuboid.center = (p1.center + p2.center) / 2
-        cuboid.n = l2_norm(p1.n + p2.n)
-        # cuboid.x_axis = 
-        # cuboid.y_axis = 
-        pass
+        # 3. Align the rest two axis based on axis size
+        axis_1_aligned = cross_norm(p1_axis[1], p2_axis[1]) < CuboidFitter.ang_thresh
+        axis_2_aligned = cross_norm(p1_axis[2], p2_axis[2]) < CuboidFitter.ang_thresh
+        axis_aligned = axis_1_aligned and axis_2_aligned
 
+        # 4. Center distance and size of the two edges are within threshold
+        # TODO: add scenario when one cuboid is inside another!
+        centers_close = ((center_dist - (p1_range[0] + p2_range[0])) / center_dist) < CuboidFitter.dist_thresh
+        range_1_close = (abs(p1_range[1] - p2_range[1]) / (p1_range[1] + p2_range[1])) < (CuboidFitter.dist_thresh)
+        range_2_close = (abs(p1_range[2] - p2_range[2]) / (p1_range[2] + p2_range[2])) < (CuboidFitter.dist_thresh)
+        dist_close = centers_close and range_1_close and range_2_close
+
+        # 5. Merge
+        if center_aligned and axis_aligned and dist_close:
+            # print('merged!')
+            if p1_range[0] > (center_dist + p2_range[0]):
+                return 1, p1
+            elif p2_range[0] > (center_dist + p1_range[0]):
+                return 1, p2
+            else:
+                x_range = ([p1_range[0] + p2_range[0], p1_range[0] + p2_range[0]] + center_dist ) / 2
+                center_split = ((p1_range[0] - p2_range[0]) + center_dist) / (2 * center_dist)
+                center = p2.center + (p1.center-p2.center) * center_split
+                # center = p1.center - center_vector * ((p2_range[0] - p1_range[0]) + center_dist) / (2 * center_dist)
+                
+            # center = (p1.center + p2.center) / 2
+            if p1_range[0] > p2_range[0]:
+                x_axis = p1_axis[0]
+            else:
+                x_axis = p2_axis[0]
+            if np.linalg.norm(p1_axis[1] + p2_axis[1]) < 1:
+                y_axis = l2_norm(p1_axis[1] - p2_axis[1])
+            else:
+                y_axis = l2_norm(p1_axis[1] + p2_axis[1])
+            if np.linalg.norm(p1_axis[2] + p2_axis[2]) < 1:
+                z_axis = l2_norm(p1_axis[2] - p2_axis[2])
+            else:
+                z_axis = l2_norm(p1_axis[2] + p2_axis[2])
+            # y_axis = l2_norm(p1_axis[1] + p2_axis[1])
+            # z_axis = l2_norm(p1_axis[2] + p2_axis[2])
+            merged_range = (p1_range + p2_range) / 2
+            # x_range = ([merged_range[0], merged_range[0]] * 2 + center_dist / 2) / 2
+            y_range = [merged_range[1], merged_range[1]]
+            z_range = [merged_range[2], merged_range[2]]
+            obj_conf = (p1.obj_conf + p2.obj_conf) / 2
+
+            box_model = Cuboid(center=center, 
+                            x_axis=x_axis, y_axis=y_axis, z_axis=z_axis, 
+                            x_range=x_range, 
+                            y_range=y_range, 
+                            z_range=z_range, 
+                            obj_conf=obj_conf)
+            return 1, box_model
+        else:
+            return 0, None
+        
     def merge_cuboids(cuboid_list, ax, plot=False):
         # cuboid_list = parameters['cuboids']
         cuboids_cur = [cuboid_list[0]] 
@@ -202,7 +198,6 @@ class CuboidFitter:
                 
                 if is_same_cuboid: # if can be merged
                     flag = -1 # merge and add to current cuboid list
-                    # merged = merge(predicted, ground_truth)
                     cuboids_cur[j] = merged_cuboid
                     break
             if flag == 1:
@@ -215,6 +210,14 @@ class CuboidFitter:
         # parameters['cuboids'] = cuboids_cur
         return cuboids_cur
 
+    def sort_by_volume(level_cube):
+        cuboid_with_volume = []
+        for i,c in enumerate(level_cube):
+            vol = c.get_volume()
+            cuboid_with_volume.append([c, vol])
+        cuboid_with_volume.sort(key = lambda cuboid_with_volume: cuboid_with_volume[1], reverse=True)
+        for i in range(len(level_cube)):
+            level_cube[i] = cuboid_with_volume[i][0]
 
     def compute_parameters(feed_dict, parameters, ax, n_instances, plot=False):
         matplotlib.use( 'tkagg' )
@@ -225,7 +228,8 @@ class CuboidFitter:
         V = feed_dict['SVD']['V']
         # normalize V
         V = l2_norm(V, axis=2)
-        axis_range = np.sqrt(5.99*s)
+        # axis_range = np.sqrt(5.99*s)
+        axis_range = 1.2*np.sqrt(5.99*s)
 
         alpha = gmm.weights_ / gmm.weights_.max()
         boxs = []
@@ -260,7 +264,8 @@ class CuboidFitter:
                 'obj_conf': box_model.obj_conf
             }
 
-            boxs.append(box_k)
+            # boxs.append(box_k)
+            boxs.append(box_model)
             if plot:
                 # matplotlib.use( 'tkagg' )
                 # fig = plt.figure(figsize=(20, 20))
@@ -269,7 +274,7 @@ class CuboidFitter:
                 box_model.plot(ax)
                 # set_axes_equal(ax)
                 # plt.show()
-                
+        # CuboidFitter.sort_by_volume(boxs)
         parameters['boxs'] = boxs   
         return boxs
 

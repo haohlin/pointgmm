@@ -68,7 +68,7 @@ def save_np_points(points_group, path: str, prefix: str, start_counts:int, trace
     np.savez_compressed(saving_path, input_points=points_group[0], pi=points_group[1], mu=points_group[2], 
                                      sigma=points_group[3], pts_seg=points_group[4], pi_nms=points_group[5], 
                                      mu_nms=points_group[6], sigma_nms=points_group[7], cuboid_list = points_group[8], 
-                                     input_mesh = points_group[9])
+                                     cuboid_list_merged = points_group[9], input_mesh = points_group[10])
 
     if prefix in trace.save_separate:
         return len(points_group[0])
@@ -313,7 +313,7 @@ def hgmm_2_usd(mix, mu, cov, level, azim=60, elev=0):
     )    
 
 def hgmms(encoder, decoder, args: Options, trace: ViewMem):
-    input_points, z ,input_mesh= get_z_by_id(encoder, args, 1, idx=[4], trace=trace)
+    input_points, z ,input_mesh= get_z_by_id(encoder, args, 1, idx=[6], trace=trace)
     input_mesh = [{
         'vertices': input_mesh[0].squeeze(0),
         'faces': input_mesh[1].squeeze(0)
@@ -330,6 +330,7 @@ def hgmms(encoder, decoder, args: Options, trace: ViewMem):
     mu_nms_list = []
     sigma_nms_list = []
     cuboid_list = []
+    cuboid_list_merged = []
     for i in range(num_gms):
         gms_ = [gms[i] for i in range(i+1)]
         vs_, splits_, pi_, mu_, sigma_ = gm_utils.hierarchical_gm_sample(gms_, trace.points_in_sample,
@@ -346,7 +347,9 @@ def hgmms(encoder, decoder, args: Options, trace: ViewMem):
         'V': V  # kx3x3
         }
 
+        # pi_nms, mu_nms, sigma_nms = pi_, mu_, sigma_
         # hgmm_2_usd(pi_, mu_, sigma_, i)
+        # TODO: substitute IoU calculation with primitive merging algo.
         pi_nms, mu_nms, sigma_nms, SVD = nms.non_max_suppression_3d((pi_, mu_, sigma_, SVD), 
                                                                     nms_th=0.35, conf_th=0.001)
         # hgmm_2_box_2_usd(pi_, mu_, sigma_, i)
@@ -382,18 +385,27 @@ def hgmms(encoder, decoder, args: Options, trace: ViewMem):
         }
         parameters = {}
 
-        matplotlib.use( 'tkagg' )
-        fig = plt.figure(figsize=(20, 20))
-        ax = fig.add_subplot(111, projection='3d')
-        ax.view_init(azim=60, elev=0)
+        # matplotlib.use( 'tkagg' )
+        # fig = plt.figure(figsize=(20, 20))
+        # ax = fig.add_subplot(111, projection='3d')
+        # ax.view_init(azim=60, elev=0)
 
-        # TODO: 1. merge box. 2. Implement a similar method
-        level_cuboids = CuboidFitter.compute_parameters(fitter_feed, parameters, ax=ax, n_instances=n_instances, plot=False)
+        level_cuboids = CuboidFitter.compute_parameters(fitter_feed, parameters, ax=None, n_instances=n_instances, plot=False)
+        
+        # set_axes_equal(ax)
+        # plt.show()
         # PlaneFitter.compute_parameters(fitter_feed, parameters, ax, n_instances, plot=False)
         # SphereFitter.compute_parameters(fitter_feed, parameters, ax, plot=False)
         # ax.scatter(input_points[0, :, 0], input_points[0, :, 1], input_points[0, :, 2])
         # PlaneFitter.merge_planes(parameters, ax, plot=True)
-        level_cuboids = CuboidFitter.merge_planes(level_cuboids, ax, plot=True)
+
+        # fig = plt.figure(figsize=(20, 20))
+        # ax2 = fig.add_subplot(111, projection='3d')
+        # ax2.view_init(azim=60, elev=0)
+        level_cuboids_merged = CuboidFitter.merge_cuboids(level_cuboids, ax=None, plot=False)
+        level_cuboids_merged = CuboidFitter.merge_cuboids(level_cuboids_merged, ax=None, plot=False)
+        # set_axes_equal(ax2)
+        # plt.show()
         # plane_2_usd(parameters['planes'], i)
         
         """
@@ -402,8 +414,6 @@ def hgmms(encoder, decoder, args: Options, trace: ViewMem):
         if edges are close, merge.
         """
 
-        set_axes_equal(ax)
-        plt.show()
 
         vs.append(vs_.squeeze(0).cpu().numpy())
         splits.append(splits_.squeeze(0).cpu().numpy())
@@ -414,13 +424,14 @@ def hgmms(encoder, decoder, args: Options, trace: ViewMem):
         mu_nms_list.append(mu_nms)
         sigma_nms_list.append(sigma_nms)
         cuboid_list.append(level_cuboids)
+        cuboid_list_merged.append(level_cuboids_merged)
         
 
     # pts_seg = gm_utils.hgmm_segmentation(gms, input_points)
     palette = create_palettes(splits)
     im, sample_points = view(vs, splits, palette)
     return True, (hgmms, ), im, (input_points.squeeze(0), pi, mu, sigma, pts_seg, pi_nms_list, 
-                                mu_nms_list, sigma_nms_list, cuboid_list, input_mesh)
+                                mu_nms_list, sigma_nms_list, cuboid_list, cuboid_list_merged, input_mesh)
     # return True, (hgmms, ), im, (input_points.squeeze(0), sample_points, splits, pts_seg, palette, pi, mu, sigma)
 
 
@@ -473,7 +484,7 @@ def evaluate(args: Options, trace: ViewMem):
 
 
 if __name__ == '__main__':
-    cls = 'airplane'
+    cls = 'table'
     # "chair" = 1
     # "airplane" = 4
     # "table" = 6
