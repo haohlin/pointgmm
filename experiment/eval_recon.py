@@ -2,10 +2,70 @@ import os
 import torch
 import argparse
 import numpy as np
+import matplotlib
+from matplotlib import cm
+import matplotlib.pyplot as plt
 from sklearn.mixture import GaussianMixture
 from sklearn.mixture._gaussian_mixture import _compute_precision_cholesky
 
 EPS = 1.0e-15
+
+def plot_gmm(ax, mix, mu, cov, color=None, cmap='Spectral', azim=60, elev=0, numWires=15, wireframe=True, plot_box=False):
+    if color is None:
+        color = np.arange(mix.shape[0]) / (mix.shape[0] - 1)
+    if cmap is not None:
+        cmap = cm.get_cmap(cmap)
+        color = cmap(color)
+
+    if not plot_box:
+        u = np.linspace(0.0, 2.0 * np.pi, numWires)
+        v = np.linspace(0.0, np.pi, numWires)
+        X = np.outer(np.cos(u), np.sin(v))
+        Y = np.outer(np.sin(u), np.sin(v))
+        Z = np.outer(np.ones_like(u), np.cos(v)) 
+        XYZ = np.stack([X.flatten(), Y.flatten(), Z.flatten()])
+        numWires_x = numWires
+    alpha = mix / mix.max()
+    ax.view_init(azim=azim, elev=elev)
+    for k in range(mix.shape[0]):
+        # skip if no points in instance k
+        if not mix[k]: 
+            continue
+        
+        # find the rotation matrix and radii of the axes
+        U, s, V = np.linalg.svd(cov[k])
+        xyz_stretch = np.sqrt(1.5*s)[:, None] * XYZ
+        xyz = V.T @ (xyz_stretch) + mu[k][:, None]#V.T
+        x, y, z = xyz
+        
+        x = x.reshape(numWires_x, numWires)
+        y = y.reshape(numWires_x, numWires)
+        z = z.reshape(numWires_x, numWires)
+
+        # ax.quiver(mu[k,0], mu[k,1], mu[k,2], V[:,0], V[:,1], V[:,2], color="r", length=0.5, normalize=True)
+        if wireframe:
+            # ax.scatter(X.flatten(), Y.flatten(), Z.flatten())
+            ax.plot_wireframe(x, y, z, rstride=1, cstride=1, color=color[k], alpha=alpha[k])
+        else:
+            ax.plot_surface(x, y, z, rstride=1, cstride=1, color=color[k], alpha=alpha[k])
+
+
+def plot_pcd(ax, pcd, color=None, cmap='Spectral', size=4, alpha=0.9, azim=60, elev=0):
+    if color is None:
+        color = pcd[:, 0]
+        vmin = -2
+        vmax = 1.5
+    else:
+        vmin = 0
+        vmax = 1
+    ax.view_init(azim=azim, elev=elev)
+    ax.scatter(pcd[:, 0], pcd[:, 1], pcd[:, 2], s=size, cmap=cmap, vmin=vmin, vmax=vmax, alpha=alpha)
+    lims = np.array([ax.get_xlim3d(), ax.get_ylim3d(), ax.get_zlim3d()])
+    min_lim = min(pcd.min() * 0.9, lims.min())
+    max_lim = max(pcd.max() * 0.9, lims.max())
+    for axis in 'xyz':
+        getattr(ax, 'set_{}lim'.format(axis))((min_lim, max_lim))
+    # ax.set_axis_off()
 
 def write_ply(verts, output_file, colors=None, indices=None):
     if colors is None:
@@ -139,10 +199,10 @@ def parse_args():
     parse input arguments
     """
     parser = argparse.ArgumentParser(description='Chamfer distance / PSNR calculator')
-    parser.add_argument('--input', type=str, default='generated/table_vae/eval_points/hgmms/hgmms_001.npz')
+    parser.add_argument('--input', type=str, default='generated/table_vae/eval_points/hgmms/')
     parser.add_argument('--obj_class', type=str, default='table')
     parser.add_argument('--id', type=str, default='01')
-    parser.add_argument('--output_dir', type=str, default='logs/loss/')
+    parser.add_argument('--output_dir', type=str, default='logs/hgmm/')
 
     args = parser.parse_args()
     return args
@@ -154,28 +214,36 @@ if __name__ == "__main__":
     print(args)
     
     # import data
-    npz_data = np.load(args.input, allow_pickle=True)
-    input_pts = torch.from_numpy(npz_data['input_points']).cuda().unsqueeze(0)
-    # input_pts = input_pts.repeat(4,1,1)
-    pts_seg = torch.from_numpy(npz_data['pts_seg']).cuda()
-    pi = npz_data['pi']
-    mu = npz_data['mu']
-    sigma = npz_data['sigma']
-    pi_nms = npz_data['pi_nms']
-    mu_nms = npz_data['mu_nms']
-    sigma_nms = npz_data['sigma_nms']
+    # npz_data = np.load(args.input, allow_pickle=True)
+    # input_pts = torch.from_numpy(npz_data['input_points']).cuda().unsqueeze(0)
+    # # input_pts = input_pts.repeat(4,1,1)
+    # pts_seg = torch.from_numpy(npz_data['pts_seg']).cuda()
+    # pi = npz_data['pi']
+    # mu = npz_data['mu']
+    # sigma = npz_data['sigma']
+    # pi_nms = npz_data['pi_nms']
+    # mu_nms = npz_data['mu_nms']
+    # sigma_nms = npz_data['sigma_nms']
 
     # generate ply file for input point cloud
     # write_ply(verts=input_pts.squeeze(0).cpu(), colors=None, indices=None, output_file=f'./experiment/{args.obj_class}_{args.id}.ply')
     
-    # sample points and calculate chamfer loss
-    # log_dir = args.output_dir
-    # obj_class = args.obj_class
-    # obj_id = args.id
     log_dir = f'{args.output_dir}{args.obj_class}_{args.id}/'
-    max_dist = max_diag_dist(npz_data['input_points'])
 
     for s in range(10):
+        # import data
+        npz_data = np.load(f'{args.input}hgmms_{s:03d}.npz', allow_pickle=True)
+        input_pts = torch.from_numpy(npz_data['input_points']).cuda().unsqueeze(0)
+        # input_pts = input_pts.repeat(4,1,1)
+        pts_seg = torch.from_numpy(npz_data['pts_seg']).cuda()
+        pi = npz_data['pi']
+        mu = npz_data['mu']
+        sigma = npz_data['sigma']
+        pi_nms = npz_data['pi_nms']
+        mu_nms = npz_data['mu_nms']
+        sigma_nms = npz_data['sigma_nms']
+        max_dist = max_diag_dist(npz_data['input_points'])
+
         psnr_list = []
         psnr_list_nms = []
         chamfer_list = []
@@ -184,7 +252,10 @@ if __name__ == "__main__":
         n_components_nms = []
         for i in range(len(pi)):
             gmm = build_gmm(pi[i], mu[i], sigma[i])
+            pi_nms[i] = pi_nms[i][pi_nms[i]>0.0]
+            pi_nms[i] = pi_nms[i] / sum(pi_nms[i])
             gmm_nms = build_gmm(pi_nms[i], mu_nms[i], sigma_nms[i])
+            # print(sum(pi[i]), sum(pi_nms[i]))
             reconstruction, labels = gmm.sample(input_pts.shape[1])
             reconstruction_nms, labels_nms = gmm_nms.sample(input_pts.shape[1])
 
@@ -192,6 +263,19 @@ if __name__ == "__main__":
             psnr_nms = PSNR(reconstruction_nms, npz_data['input_points'], max_dist)
             psnr_list.append(psnr)
             psnr_list_nms.append(psnr_nms)
+            
+            # matplotlib.use( 'tkagg' )
+            # fig = plt.figure(figsize=(20, 20))
+            # ax = fig.add_subplot(121, projection='3d')
+            # # plot_gmm(ax,pi[i], mu[i], sigma[i])
+            # plot_pcd(ax, reconstruction)
+            # print(reconstruction.shape)
+            # ax2 = fig.add_subplot(122, projection='3d')
+            # # plot_gmm(ax2,pi_nms[i], mu_nms[i], sigma_nms[i])
+            # plot_pcd(ax2, reconstruction_nms)
+            # print(reconstruction_nms.shape)
+            # plt.tight_layout()
+            # plt.show()
 
             chamfer = chamfer_loss(gts=input_pts, preds=torch.from_numpy(reconstruction).cuda().unsqueeze(0)).tolist()
             chamfer_nms = chamfer_loss(gts=input_pts, preds=torch.from_numpy(reconstruction_nms).cuda().unsqueeze(0)).tolist()
